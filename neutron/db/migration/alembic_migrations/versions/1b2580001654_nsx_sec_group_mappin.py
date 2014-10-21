@@ -23,19 +23,24 @@ Create Date: 2013-12-27 13:02:42.894648
 revision = '1b2580001654'
 down_revision = 'abc88c33f74f'
 
+# Change to ['*'] if this migration applies to all plugins
+
+migration_for_plugins = [
+    'neutron.plugins.nicira.NeutronPlugin.NvpPluginV2',
+    'neutron.plugins.nicira.NeutronServicePlugin.NvpAdvancedPlugin',
+    'neutron.plugins.vmware.plugin.NsxPlugin',
+    'neutron.plugins.vmware.plugin.NsxServicePlugin'
+]
+
 from alembic import op
 import sqlalchemy as sa
 
 from neutron.db import migration
 
 
-def upgrade():
-
-    if not migration.schema_has_table('securitygroups'):
-        # Assume that, in the database we are migrating from, the
-        # configured plugin did not create the securitygroups table.
+def upgrade(active_plugins=None, options=None):
+    if not migration.should_run(active_plugins, migration_for_plugins):
         return
-
     # Create table for security group mappings
     op.create_table(
         'neutron_nsx_security_group_mappings',
@@ -50,5 +55,7 @@ def upgrade():
                "from securitygroups")
 
 
-def downgrade():
-    pass
+def downgrade(active_plugins=None, options=None):
+    if not migration.should_run(active_plugins, migration_for_plugins):
+        return
+    op.drop_table('neutron_nsx_security_group_mappings')

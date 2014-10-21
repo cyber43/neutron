@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012-2013 NEC Corporation.  All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,11 +13,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Ryota MIBU
 
 import sqlalchemy as sa
 from sqlalchemy import orm
 from sqlalchemy.orm import exc as sa_exc
-from sqlalchemy import sql
 
 from neutron.api.v2 import attributes
 from neutron.db import model_base
@@ -203,11 +205,11 @@ class PacketFilterDbMixin(object):
         query = (context.session.query(nmodels.OFCFilterMapping)
                  .join(PacketFilter,
                        nmodels.OFCFilterMapping.neutron_id == PacketFilter.id)
-                 .filter(PacketFilter.admin_state_up == sql.true()))
+                 .filter(PacketFilter.admin_state_up == True))
 
         network_id = port['network_id']
         net_pf_query = (query.filter(PacketFilter.network_id == network_id)
-                        .filter(PacketFilter.in_port == sql.null()))
+                        .filter(PacketFilter.in_port == None))
         net_filters = [(pf['neutron_id'], pf['ofc_id']) for pf in net_pf_query]
 
         port_pf_query = query.filter(PacketFilter.in_port == port['id'])

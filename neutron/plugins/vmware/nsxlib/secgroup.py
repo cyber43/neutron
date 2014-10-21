@@ -13,13 +13,17 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import json
+
 from neutron.common import constants
 from neutron.common import exceptions
 from neutron.openstack.common import excutils
-from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log
 from neutron.plugins.vmware.common import utils
-from neutron.plugins.vmware import nsxlib
+from neutron.plugins.vmware.nsxlib import _build_uri_path
+from neutron.plugins.vmware.nsxlib import do_request
+from neutron.plugins.vmware.nsxlib import format_exception
+from neutron.plugins.vmware.nsxlib import get_all_query_pages
 
 HTTP_GET = "GET"
 HTTP_POST = "POST"
@@ -37,14 +41,14 @@ def mk_body(**kwargs):
     :param kwargs: the key/value pirs to be dumped into a json string.
     :returns: a json string.
     """
-    return jsonutils.dumps(kwargs, ensure_ascii=False)
+    return json.dumps(kwargs, ensure_ascii=False)
 
 
 def query_security_profiles(cluster, fields=None, filters=None):
-    return nsxlib.get_all_query_pages(
-        nsxlib._build_uri_path(SECPROF_RESOURCE,
-                               fields=fields,
-                               filters=filters),
+    return get_all_query_pages(
+        _build_uri_path(SECPROF_RESOURCE,
+                        fields=fields,
+                        filters=filters),
         cluster)
 
 
@@ -78,7 +82,7 @@ def create_security_profile(cluster, tenant_id, neutron_id, security_profile):
             hidden_rules['logical_port_ingress_rules']),
         logical_port_egress_rules=hidden_rules['logical_port_egress_rules']
     )
-    rsp = nsxlib.do_request(HTTP_POST, path, body, cluster=cluster)
+    rsp = do_request(HTTP_POST, path, body, cluster=cluster)
     if security_profile.get('name') == 'default':
         # If security group is default allow ip traffic between
         # members of the same security profile is allowed and ingress traffic
@@ -112,9 +116,9 @@ def update_security_group_rules(cluster, spid, rules):
         body = mk_body(
             logical_port_ingress_rules=rules['logical_port_ingress_rules'],
             logical_port_egress_rules=rules['logical_port_egress_rules'])
-        rsp = nsxlib.do_request(HTTP_PUT, path, body, cluster=cluster)
+        rsp = do_request(HTTP_PUT, path, body, cluster=cluster)
     except exceptions.NotFound as e:
-        LOG.error(nsxlib.format_exception("Unknown", e, locals()))
+        LOG.error(format_exception("Unknown", e, locals()))
         #FIXME(salvatore-orlando): This should not raise NeutronException
         raise exceptions.NeutronException()
     LOG.debug(_("Updated Security Profile: %s"), rsp)
@@ -122,18 +126,19 @@ def update_security_group_rules(cluster, spid, rules):
 
 
 def update_security_profile(cluster, spid, name):
-    return nsxlib.do_request(
-        HTTP_PUT,
-        nsxlib._build_uri_path(SECPROF_RESOURCE, resource_id=spid),
-        jsonutils.dumps({"display_name": utils.check_and_truncate(name)}),
-        cluster=cluster)
+    return do_request(HTTP_PUT,
+                      _build_uri_path(SECPROF_RESOURCE, resource_id=spid),
+                      json.dumps({
+                          "display_name": utils.check_and_truncate(name)
+                      }),
+                      cluster=cluster)
 
 
 def delete_security_profile(cluster, spid):
     path = "/ws.v1/security-profile/%s" % spid
 
     try:
-        nsxlib.do_request(HTTP_DELETE, path, cluster=cluster)
+        do_request(HTTP_DELETE, path, cluster=cluster)
     except exceptions.NotFound:
         with excutils.save_and_reraise_exception():
             # This is not necessarily an error condition

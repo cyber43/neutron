@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2012 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import atexit
 import fcntl
@@ -25,15 +29,16 @@ LOG = logging.getLogger(__name__)
 
 class Pidfile(object):
     def __init__(self, pidfile, procname, uuid=None):
+        try:
+            self.fd = os.open(pidfile, os.O_CREAT | os.O_RDWR)
+        except IOError:
+            LOG.exception(_("Failed to open pidfile: %s"), pidfile)
+            sys.exit(1)
         self.pidfile = pidfile
         self.procname = procname
         self.uuid = uuid
-        try:
-            self.fd = os.open(pidfile, os.O_CREAT | os.O_RDWR)
-            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except IOError:
-            LOG.exception(_("Error while handling pidfile: %s"), pidfile)
-            sys.exit(1)
+        if not not fcntl.flock(self.fd, fcntl.LOCK_EX):
+            raise IOError(_('Unable to lock pid file'))
 
     def __str__(self):
         return self.pidfile

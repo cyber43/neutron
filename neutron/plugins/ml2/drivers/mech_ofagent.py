@@ -1,7 +1,4 @@
 # Copyright (C) 2014 VA Linux Systems Japan K.K.
-# Copyright (C) 2014 Fumihiko Kakuma <kakuma at valinux co jp>
-# All Rights Reserved.
-#
 # Based on openvswitch mechanism driver.
 #
 # Copyright (c) 2013 OpenStack Foundation
@@ -18,6 +15,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Fumihiko Kakuma, VA Linux Systems Japan K.K.
 
 from neutron.common import constants
 from neutron.extensions import portbindings
@@ -47,23 +45,17 @@ class OfagentMechanismDriver(mech_agent.SimpleAgentMechanismDriverBase):
              portbindings.OVS_HYBRID_PLUG: True})
 
     def check_segment_for_agent(self, segment, agent):
-        bridge_mappings = agent['configurations'].get('bridge_mappings', {})
-        interface_mappings = agent['configurations'].get('interface_mappings',
-                                                         {})
+        mappings = agent['configurations'].get('bridge_mappings', {})
         tunnel_types = agent['configurations'].get('tunnel_types', [])
-        LOG.debug("Checking segment: %(segment)s "
-                  "for bridge_mappings: %(bridge_mappings)s "
-                  "and interface_mappings: %(interface_mappings)s "
-                  "with tunnel_types: %(tunnel_types)s",
-                  {'segment': segment,
-                   'bridge_mappings': bridge_mappings,
-                   'interface_mappings': interface_mappings,
+        LOG.debug(_("Checking segment: %(segment)s "
+                    "for mappings: %(mappings)s "
+                    "with tunnel_types: %(tunnel_types)s"),
+                  {'segment': segment, 'mappings': mappings,
                    'tunnel_types': tunnel_types})
         network_type = segment[api.NETWORK_TYPE]
         return (
             network_type == p_const.TYPE_LOCAL or
             network_type in tunnel_types or
             (network_type in [p_const.TYPE_FLAT, p_const.TYPE_VLAN] and
-                (segment[api.PHYSICAL_NETWORK] in bridge_mappings
-                or segment[api.PHYSICAL_NETWORK] in interface_mappings))
+                segment[api.PHYSICAL_NETWORK] in mappings)
         )

@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -13,17 +15,16 @@
 # under the License.
 
 from neutron.common import constants
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron.common import utils
 from neutron import manager
 from neutron.openstack.common import log as logging
-from neutron.plugins.common import constants as service_constants
+from neutron.openstack.common.rpc import proxy
 
 LOG = logging.getLogger(__name__)
 
 
-class MeteringAgentNotifyAPI(n_rpc.RpcProxy):
+class MeteringAgentNotifyAPI(proxy.RpcProxy):
     """API for plugin to notify L3 metering agent."""
     BASE_RPC_API_VERSION = '1.0'
 
@@ -34,8 +35,7 @@ class MeteringAgentNotifyAPI(n_rpc.RpcProxy):
     def _agent_notification(self, context, method, routers):
         """Notify l3 metering agents hosted by l3 agent hosts."""
         adminContext = context.is_admin and context or context.elevated()
-        plugin = manager.NeutronManager.get_service_plugins().get(
-            service_constants.L3_ROUTER_NAT)
+        plugin = manager.NeutronManager.get_plugin()
 
         l3_routers = {}
         for router in routers:
@@ -66,17 +66,18 @@ class MeteringAgentNotifyAPI(n_rpc.RpcProxy):
                    'router_id': router_id})
         self.fanout_cast(
             context, self.make_msg(method,
-                                   router_id=router_id))
+                                   router_id=router_id),
+            topic=self.topic)
 
     def _notification(self, context, method, routers):
         """Notify all the agents that are hosting the routers."""
-        plugin = manager.NeutronManager.get_service_plugins().get(
-            service_constants.L3_ROUTER_NAT)
+        plugin = manager.NeutronManager.get_plugin()
         if utils.is_extension_supported(
             plugin, constants.L3_AGENT_SCHEDULER_EXT_ALIAS):
             self._agent_notification(context, method, routers)
         else:
-            self.fanout_cast(context, self.make_msg(method, routers=routers))
+            self.fanout_cast(context, self.make_msg(method, routers=routers),
+                             topic=self.topic)
 
     def router_deleted(self, context, router_id):
         self._notification_fanout(context, 'router_deleted', router_id)

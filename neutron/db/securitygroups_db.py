@@ -91,7 +91,7 @@ class SecurityGroupRule(model_base.BASEV2, models_v2.HasId,
 
 
 class SecurityGroupDbMixin(ext_sg.SecurityGroupPluginBase):
-    """Mixin class to add security group to db_base_plugin_v2."""
+    """Mixin class to add security group to db_plugin_base_v2."""
 
     __native_bulk_support = True
 
@@ -147,12 +147,7 @@ class SecurityGroupDbMixin(ext_sg.SecurityGroupPluginBase):
         # because all the unit tests do not explicitly set the context on
         # GETS. TODO(arosen)  context handling can probably be improved here.
         if not default_sg and context.tenant_id:
-            tenant_id = filters.get('tenant_id')
-            if tenant_id:
-                tenant_id = tenant_id[0]
-            else:
-                tenant_id = context.tenant_id
-            self._ensure_default_security_group(context, tenant_id)
+            self._ensure_default_security_group(context, context.tenant_id)
         marker_obj = self._get_marker_obj(context, 'security_group', limit,
                                           marker)
         return self._get_collection(context,
@@ -318,10 +313,6 @@ class SecurityGroupDbMixin(ext_sg.SecurityGroupPluginBase):
                 if rule[attr] > 255:
                     raise ext_sg.SecurityGroupInvalidIcmpValue(
                         field=field, attr=attr, value=rule[attr])
-            if (rule['port_range_min'] is None and
-                    rule['port_range_max']):
-                raise ext_sg.SecurityGroupMissingIcmpType(
-                    value=rule['port_range_max'])
 
     def _validate_security_group_rules(self, context, security_group_rule):
         """Check that rules being installed.
@@ -410,7 +401,7 @@ class SecurityGroupDbMixin(ext_sg.SecurityGroupPluginBase):
             # remote_group_id. Therefore it is not possible to do this
             # query unless the behavior of _get_collection()
             # is changed which cannot be because other methods are already
-            # relying on this behavior. Therefore, we do the filtering
+            # relying on this behavor. Therefore, we do the filtering
             # below to check for these corner cases.
             for db_rule in db_rules:
                 # need to remove id from db_rule for matching
@@ -523,13 +514,9 @@ class SecurityGroupDbMixin(ext_sg.SecurityGroupPluginBase):
             return
 
         port_sg = p.get(ext_sg.SECURITYGROUPS, [])
-        filters = {'id': port_sg}
-        tenant_id = p.get('tenant_id')
-        if tenant_id:
-            filters['tenant_id'] = [tenant_id]
         valid_groups = set(g['id'] for g in
                            self.get_security_groups(context, fields=['id'],
-                                                    filters=filters))
+                                                    filters={'id': port_sg}))
 
         requested_groups = set(port_sg)
         port_sg_missing = requested_groups - valid_groups

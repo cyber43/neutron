@@ -13,6 +13,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mohammad Banikazemi, IBM Corp
+
 
 import contextlib
 
@@ -56,6 +59,9 @@ class TestSdnveNeutronAgent(base.BaseTestCase):
         notifier_cls = notifier_p.start()
         self.notifier = mock.Mock()
         notifier_cls.return_value = self.notifier
+        # Avoid rpc initialization for unit tests
+        cfg.CONF.set_override('rpc_backend',
+                              'neutron.openstack.common.rpc.impl_fake')
         cfg.CONF.set_override('integration_bridge',
                               'br_int', group='SDNVE')
         kwargs = sdnve_neutron_agent.create_agent_config_map(cfg.CONF)
@@ -100,9 +106,9 @@ class TestSdnveNeutronAgent(base.BaseTestCase):
             kwargs = {}
             kwargs['info'] = {'new_controller': '10.10.10.1'}
             self.agent.info_update('dummy', **kwargs)
-        run_vsctl_func.assert_called_once_with(['set-controller',
-                                                'br_int',
-                                                'tcp:10.10.10.1'])
+        run_vsctl_func.assert_called_one_with(['set-controller',
+                                               'br_int',
+                                               'tcp:10.10.10.1'])
 
     def test_get_info(self):
         with mock.patch.object(self.agent.int_br,

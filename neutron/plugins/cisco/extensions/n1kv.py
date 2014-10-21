@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cisco Systems, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Abhishek Raut, Cisco Systems, Inc.
+# @author: Rudrajit Tapadar, Cisco Systems, Inc.
+# @author: Aruna Kushwaha, Cisco Systems, Inc.
+# @author: Sergey Sudakovich, Cisco Systems, Inc.
 
 from neutron.api import extensions
 from neutron.api.v2 import attributes

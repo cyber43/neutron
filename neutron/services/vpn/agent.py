@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013, Nachi Ueno, NTT I3, Inc.
 # All Rights Reserved.
 #
@@ -39,7 +41,7 @@ class VPNAgent(l3_agent.L3NATAgentWithStateReport):
 
         :param host: hostname. This is needed for rpc
         Each devices will stays as processes.
-        They will communicate with
+        They will communiate with
         server side service plugin using rpc with
         device specific rpc topic.
         :returns: None
@@ -96,7 +98,7 @@ class VPNAgent(l3_agent.L3NATAgentWithStateReport):
         if not router_info:
             return
         router_info.iptables_manager.ipv4['nat'].remove_rule(
-            chain, rule, top=top)
+            chain, rule)
 
     def iptables_apply(self, router_id):
         """Apply IPtables.
@@ -130,15 +132,15 @@ class VPNAgent(l3_agent.L3NATAgentWithStateReport):
         for device in self.devices:
             device.destroy_router(router_id)
 
-    def _process_router_if_compatible(self, router):
+    def _process_routers(self, routers, all_routers=False):
         """Router sync event.
 
         This method overwrites parent class method.
-        :param router: a router
+        :param routers: list of routers
         """
-        super(VPNAgent, self)._process_router_if_compatible(router)
+        super(VPNAgent, self)._process_routers(routers, all_routers)
         for device in self.devices:
-            device.sync(self.context, [router])
+            device.sync(self.context, routers)
 
 
 def main():

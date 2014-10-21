@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cisco Systems, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -16,6 +18,17 @@ from oslo.config import cfg
 
 from neutron.agent.common import config
 
+
+cisco_plugins_opts = [
+    cfg.StrOpt('vswitch_plugin',
+               default='neutron.plugins.openvswitch.ovs_neutron_plugin.'
+                       'OVSNeutronPluginV2',
+               help=_("Virtual Switch to use")),
+    cfg.StrOpt('nexus_plugin',
+               default='neutron.plugins.cisco.nexus.cisco_nexus_plugin_v2.'
+                       'NexusPlugin',
+               help=_("Nexus Switch to use")),
+]
 
 cisco_opts = [
     cfg.StrOpt('vlan_name_prefix', default='q-',
@@ -36,6 +49,10 @@ cisco_opts = [
                default='neutron.plugins.cisco.models.virt_phy_sw_v2.'
                        'VirtualPhysicalSwitchModelV2',
                help=_("Model Class")),
+    cfg.StrOpt('nexus_driver',
+               default='neutron.plugins.cisco.test.nexus.'
+                       'fake_nexus_driver.CiscoNEXUSFakeDriver',
+               help=_("Nexus Driver Name")),
 ]
 
 cisco_n1k_opts = [
@@ -61,25 +78,22 @@ cisco_n1k_opts = [
                help=_("N1K default policy profile")),
     cfg.StrOpt('network_node_policy_profile', default='dhcp_pp',
                help=_("N1K policy profile for network node")),
-    cfg.IntOpt('poll_duration', default=60,
+    cfg.StrOpt('poll_duration', default='10',
                help=_("N1K Policy profile polling duration in seconds")),
-    cfg.BoolOpt('restrict_policy_profiles', default=False,
-               help=_("Restrict the visibility of policy profiles to the "
-                      "tenants")),
-    cfg.IntOpt('http_pool_size', default=4,
-               help=_("Number of threads to use to make HTTP requests")),
     cfg.IntOpt('http_timeout', default=15,
                help=_("N1K http timeout duration in seconds")),
 ]
 
 cfg.CONF.register_opts(cisco_opts, "CISCO")
 cfg.CONF.register_opts(cisco_n1k_opts, "CISCO_N1K")
+cfg.CONF.register_opts(cisco_plugins_opts, "CISCO_PLUGINS")
 config.register_root_helper(cfg.CONF)
 
 # shortcuts
 CONF = cfg.CONF
 CISCO = cfg.CONF.CISCO
 CISCO_N1K = cfg.CONF.CISCO_N1K
+CISCO_PLUGINS = cfg.CONF.CISCO_PLUGINS
 
 #
 # device_dictionary - Contains all external device configuration.
@@ -126,7 +140,7 @@ class CiscoConfigOptions():
         for parsed_file in multi_parser.parsed:
             for parsed_item in parsed_file.keys():
                 dev_id, sep, dev_ip = parsed_item.partition(':')
-                if dev_id.lower() == 'n1kv':
+                if dev_id.lower() in ['nexus_switch', 'n1kv']:
                     for dev_key, value in parsed_file[parsed_item].items():
                         if dev_ip and not first_device_ip:
                             first_device_ip = dev_ip

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -40,6 +42,13 @@ class TestOvsdbMonitor(base.BaseTestCase):
     def test__read_stdout_returns_none_for_empty_read(self):
         result = self.read_output_queues_and_returns_result('stdout', '')
         self.assertIsNone(result)
+
+    def test__read_stdout_queues_root_wrapper_errors_to_stderr_output(self):
+        result = self.read_output_queues_and_returns_result('stdout',
+                                                            self.root_helper)
+        self.assertIsNone(result)
+        self.assertEqual(self.monitor._stderr_lines.get_nowait(),
+                         self.root_helper)
 
     def test__read_stdout_queues_normal_output_to_stdout_queue(self):
         output = 'foo'

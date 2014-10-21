@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2013 OpenStack Foundation.
 # All rights reserved.
 #
@@ -13,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import abc
+from abc import abstractmethod
 
 from neutron.api import extensions
 from neutron.api.v2 import base
@@ -128,10 +130,10 @@ class LbaasAgentSchedulerPluginBase(object):
     All of method must be in an admin context.
     """
 
-    @abc.abstractmethod
+    @abstractmethod
     def list_pools_on_lbaas_agent(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_lbaas_agent_hosting_pool(self, context, pool_id):
         pass

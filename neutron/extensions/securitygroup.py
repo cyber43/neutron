@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All rights reserved.
 #
@@ -13,7 +15,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import abc
+from abc import ABCMeta
+from abc import abstractmethod
 import netaddr
 
 from oslo.config import cfg
@@ -42,11 +45,6 @@ class SecurityGroupInvalidPortValue(qexception.InvalidInput):
 class SecurityGroupInvalidIcmpValue(qexception.InvalidInput):
     message = _("Invalid value for ICMP %(field)s (%(attr)s) "
                 "%(value)s. It must be 0 to 255.")
-
-
-class SecurityGroupMissingIcmpType(qexception.InvalidInput):
-    message = _("ICMP code (port-range-max) %(value)s is provided"
-                " but ICMP type (port-range-min) is missing.")
 
 
 class SecurityGroupInUse(qexception.InUse):
@@ -103,7 +101,7 @@ class DuplicateSecurityGroupRuleInPost(qexception.InUse):
 
 
 class SecurityGroupRuleExists(qexception.InUse):
-    message = _("Security group rule already exists. Rule id is %(id)s.")
+    message = _("Security group rule already exists. Group id is %(id)s.")
 
 
 class SecurityGroupRuleParameterConflict(qexception.InvalidInput):
@@ -116,7 +114,7 @@ def convert_protocol(value):
     try:
         val = int(value)
         if val >= 0 and val <= 255:
-            return value
+            return val
         raise SecurityGroupRuleInvalidProtocol(
             protocol=value, values=sg_supported_protocols)
     except (ValueError, TypeError):
@@ -310,45 +308,45 @@ class Securitygroup(extensions.ExtensionDescriptor):
             return {}
 
 
-@six.add_metaclass(abc.ABCMeta)
+@six.add_metaclass(ABCMeta)
 class SecurityGroupPluginBase(object):
 
-    @abc.abstractmethod
+    @abstractmethod
     def create_security_group(self, context, security_group):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def update_security_group(self, context, id, security_group):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def delete_security_group(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_security_groups(self, context, filters=None, fields=None,
                             sorts=None, limit=None, marker=None,
                             page_reverse=False):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_security_group(self, context, id, fields=None):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def create_security_group_rule(self, context, security_group_rule):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def delete_security_group_rule(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_security_group_rules(self, context, filters=None, fields=None,
                                  sorts=None, limit=None, marker=None,
                                  page_reverse=False):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_security_group_rule(self, context, id, fields=None):
         pass

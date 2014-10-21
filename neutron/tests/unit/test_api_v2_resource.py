@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 Intel Corporation.
 # All Rights Reserved.
 #
@@ -12,6 +14,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Zhongyue Luo, Intel Corporation.
+#
 
 import mock
 from webob import exc
@@ -118,13 +123,6 @@ class RequestTestCase(base.BaseTestCase):
 
 
 class ResourceTestCase(base.BaseTestCase):
-
-    @staticmethod
-    def _get_deserializer(req_format):
-        if req_format == 'json':
-            return wsgi.JSONDeserializer()
-        else:
-            return wsgi.XMLDeserializer()
 
     def test_unmapped_neutron_error_with_json(self):
         msg = u'\u7f51\u7edc'
@@ -264,74 +262,47 @@ class ResourceTestCase(base.BaseTestCase):
         self.assertIn(msg_translation,
                       str(wsgi.JSONDeserializer().deserialize(res.body)))
 
-    @staticmethod
-    def _make_request_with_side_effect(side_effect, req_format=None):
+    def test_http_error(self):
         controller = mock.MagicMock()
-        controller.test.side_effect = side_effect
+        controller.test.side_effect = exc.HTTPGatewayTimeout()
 
         resource = webtest.TestApp(wsgi_resource.Resource(controller))
 
-        routing_args = {'action': 'test'}
-        if req_format:
-            routing_args.update({'format': req_format})
-        environ = {'wsgiorg.routing_args': (None, routing_args)}
+        environ = {'wsgiorg.routing_args': (None, {'action': 'test'})}
         res = resource.get('', extra_environ=environ, expect_errors=True)
-        return res
-
-    def test_http_error(self):
-        res = self._make_request_with_side_effect(exc.HTTPGatewayTimeout())
-
-        # verify that the exception structure is the one expected
-        # by the python-neutronclient
-        self.assertEqual(exc.HTTPGatewayTimeout().explanation,
-                         res.json['NeutronError']['message'])
-        self.assertEqual('HTTPGatewayTimeout',
-                         res.json['NeutronError']['type'])
-        self.assertEqual('', res.json['NeutronError']['detail'])
-        self.assertEqual(exc.HTTPGatewayTimeout.code, res.status_int)
-
-    def _test_unhandled_error(self, req_format='json'):
-        expected_res = {'body': {'NeutronError':
-                                {'detail': '',
-                                 'message': _(
-                                     'Request Failed: internal server '
-                                     'error while processing your request.'),
-                                 'type': 'HTTPInternalServerError'}}}
-        res = self._make_request_with_side_effect(side_effect=Exception(),
-                                 req_format=req_format)
-        self.assertEqual(exc.HTTPInternalServerError.code,
-                         res.status_int)
-        self.assertEqual(expected_res,
-                         self._get_deserializer(
-                             req_format).deserialize(res.body))
+        self.assertEqual(res.status_int, exc.HTTPGatewayTimeout.code)
 
     def test_unhandled_error_with_json(self):
-        self._test_unhandled_error()
+        expected_res = {'body': {'NeutronError':
+                                 _('Request Failed: internal server error '
+                                   'while processing your request.')}}
+        controller = mock.MagicMock()
+        controller.test.side_effect = Exception()
+
+        resource = webtest.TestApp(wsgi_resource.Resource(controller))
+
+        environ = {'wsgiorg.routing_args': (None, {'action': 'test',
+                                                   'format': 'json'})}
+        res = resource.get('', extra_environ=environ, expect_errors=True)
+        self.assertEqual(res.status_int, exc.HTTPInternalServerError.code)
+        self.assertEqual(wsgi.JSONDeserializer().deserialize(res.body),
+                         expected_res)
 
     def test_unhandled_error_with_xml(self):
-        self._test_unhandled_error(req_format='xml')
-
-    def _test_not_implemented_error(self, req_format='json'):
         expected_res = {'body': {'NeutronError':
-                                {'detail': '',
-                                 'message': _(
-                                     'The server has either erred or is '
-                                     'incapable of performing the requested '
-                                     'operation.'),
-                                 'type': 'HTTPNotImplemented'}}}
+                                 _('Request Failed: internal server error '
+                                   'while processing your request.')}}
+        controller = mock.MagicMock()
+        controller.test.side_effect = Exception()
 
-        res = self._make_request_with_side_effect(exc.HTTPNotImplemented(),
-                                 req_format=req_format)
-        self.assertEqual(exc.HTTPNotImplemented.code, res.status_int)
-        self.assertEqual(expected_res,
-                         self._get_deserializer(
-                             req_format).deserialize(res.body))
+        resource = webtest.TestApp(wsgi_resource.Resource(controller))
 
-    def test_not_implemented_error_with_json(self):
-        self._test_not_implemented_error()
-
-    def test_not_implemented_error_with_xml(self):
-        self._test_not_implemented_error(req_format='xml')
+        environ = {'wsgiorg.routing_args': (None, {'action': 'test',
+                                                   'format': 'xml'})}
+        res = resource.get('', extra_environ=environ, expect_errors=True)
+        self.assertEqual(res.status_int, exc.HTTPInternalServerError.code)
+        self.assertEqual(wsgi.XMLDeserializer().deserialize(res.body),
+                         expected_res)
 
     def test_status_200(self):
         controller = mock.MagicMock()

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,11 +13,13 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import contextlib
 
 import mock
-from six import moves
+from six.moves import xrange
 from webob import exc
 
 from neutron import context
@@ -87,7 +91,7 @@ class TestLoadBalancerCallbacks(TestLoadBalancerPluginBase):
         # add 3 pools and 2 vips directly to DB
         # to create 2 "ready" devices and one pool without vip
         pools = []
-        for i in moves.xrange(3):
+        for i in xrange(3):
             pools.append(ldb.Pool(id=uuidutils.generate_uuid(),
                                   subnet_id=self._subnet_id,
                                   protocol="HTTP",
@@ -561,8 +565,7 @@ class TestLoadBalancerPluginNotificationWrapper(TestLoadBalancerPluginBase):
     def test_delete_vip(self):
         with self.subnet() as subnet:
             with self.pool(subnet=subnet) as pool:
-                with self.vip(pool=pool, subnet=subnet,
-                              do_delete=False) as vip:
+                with self.vip(pool=pool, subnet=subnet, no_delete=True) as vip:
                     ctx = context.get_admin_context()
                     self.plugin_instance.delete_vip(ctx, vip['vip']['id'])
                     vip['vip']['status'] = 'PENDING_DELETE'
@@ -614,7 +617,7 @@ class TestLoadBalancerPluginNotificationWrapper(TestLoadBalancerPluginBase):
                     mock.ANY, old_pool, updated, 'host')
 
     def test_delete_pool(self):
-        with self.pool(do_delete=False) as pool:
+        with self.pool(no_delete=True) as pool:
             req = self.new_delete_request('pools',
                                           pool['pool']['id'])
             res = req.get_response(self.ext_api)
@@ -661,7 +664,7 @@ class TestLoadBalancerPluginNotificationWrapper(TestLoadBalancerPluginBase):
         with self.pool() as pool:
             pool_id = pool['pool']['id']
             with self.member(pool_id=pool_id,
-                             do_delete=False) as member:
+                             no_delete=True) as member:
                 req = self.new_delete_request('members',
                                               member['member']['id'])
                 res = req.get_response(self.ext_api)

@@ -11,6 +11,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import os
 
@@ -20,6 +22,7 @@ from alembic import script as alembic_script
 from alembic import util as alembic_util
 from oslo.config import cfg
 
+from neutron.common import legacy
 
 HEAD_FILENAME = 'HEAD'
 
@@ -43,16 +46,12 @@ _db_opts = [
     cfg.StrOpt('connection',
                deprecated_name='sql_connection',
                default='',
-               secret=True,
                help=_('URL to database')),
-    cfg.StrOpt('engine',
-               default='',
-               help=_('Database engine')),
 ]
 
 CONF = cfg.ConfigOpts()
-CONF.register_cli_opts(_core_opts)
-CONF.register_cli_opts(_db_opts, 'database')
+CONF.register_opts(_core_opts)
+CONF.register_opts(_db_opts, 'database')
 CONF.register_opts(_quota_opts, 'QUOTAS')
 
 
@@ -133,10 +132,6 @@ def add_command_parsers(subparsers):
         parser.add_argument('--delta', type=int)
         parser.add_argument('--sql', action='store_true')
         parser.add_argument('revision', nargs='?')
-        parser.add_argument('--mysql-engine',
-                            default='',
-                            help='Change MySQL storage engine of current '
-                                 'existing tables')
         parser.set_defaults(func=do_upgrade_downgrade)
 
     parser = subparsers.add_parser('stamp')
@@ -159,19 +154,16 @@ command_opt = cfg.SubCommandOpt('command',
 CONF.register_cli_opt(command_opt)
 
 
-def get_alembic_config():
-    config = alembic_config.Config(os.path.join(os.path.dirname(__file__),
-                                                'alembic.ini'))
+def main():
+    config = alembic_config.Config(
+        os.path.join(os.path.dirname(__file__), 'alembic.ini')
+    )
     config.set_main_option('script_location',
                            'neutron.db.migration:alembic_migrations')
-    return config
-
-
-def main():
-    config = get_alembic_config()
     # attach the Neutron conf to the Alembic conf
     config.neutron_config = CONF
 
     CONF()
     #TODO(gongysh) enable logging
+    legacy.modernize_quantum_config(CONF)
     CONF.command.func(config, CONF.command.name)

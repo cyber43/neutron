@@ -16,17 +16,14 @@
 import mock
 
 from neutron.db import api as db_api
-from neutron.extensions import multiprovidernet as mpnet
-from neutron.extensions import providernet as pnet
 from neutron.openstack.common import uuidutils
 from neutron.plugins.vmware.api_client import exception as api_exc
 from neutron.plugins.vmware.common import exceptions as nsx_exc
 from neutron.plugins.vmware.common import nsx_utils
 from neutron.plugins.vmware.common import utils
-from neutron.plugins.vmware.dbexts import models
 from neutron.plugins.vmware import nsxlib
 from neutron.tests import base
-from neutron.tests.unit import vmware
+from neutron.tests.unit.vmware import nsx_method
 from neutron.tests.unit.vmware.nsxlib import base as nsx_base
 
 
@@ -36,33 +33,33 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # Mock relevant db calls
         # This will allow for avoiding setting up the plugin
         # for creating db entries
-        mock.patch(vmware.nsx_method('get_nsx_switch_and_port_id',
-                                     module_name='dbexts.db'),
+        mock.patch(nsx_method('get_nsx_switch_and_port_id',
+                              module_name='dbexts.db'),
                    return_value=ret_value).start()
-        mock.patch(vmware.nsx_method('add_neutron_nsx_port_mapping',
-                                     module_name='dbexts.db')).start()
-        mock.patch(vmware.nsx_method('delete_neutron_nsx_port_mapping',
-                                     module_name='dbexts.db')).start()
+        mock.patch(nsx_method('add_neutron_nsx_port_mapping',
+                              module_name='dbexts.db')).start()
+        mock.patch(nsx_method('delete_neutron_nsx_port_mapping',
+                              module_name='dbexts.db')).start()
 
     def _mock_network_mapping_db_calls(self, ret_value):
         # Mock relevant db calls
         # This will allow for avoiding setting up the plugin
         # for creating db entries
-        mock.patch(vmware.nsx_method('get_nsx_switch_ids',
-                                     module_name='dbexts.db'),
+        mock.patch(nsx_method('get_nsx_switch_ids',
+                              module_name='dbexts.db'),
                    return_value=ret_value).start()
-        mock.patch(vmware.nsx_method('add_neutron_nsx_network_mapping',
-                                     module_name='dbexts.db')).start()
+        mock.patch(nsx_method('add_neutron_nsx_network_mapping',
+                              module_name='dbexts.db')).start()
 
     def _mock_router_mapping_db_calls(self, ret_value):
         # Mock relevant db calls
         # This will allow for avoiding setting up the plugin
         # for creating db entries
-        mock.patch(vmware.nsx_method('get_nsx_router_id',
-                                     module_name='dbexts.db'),
+        mock.patch(nsx_method('get_nsx_router_id',
+                              module_name='dbexts.db'),
                    return_value=ret_value).start()
-        mock.patch(vmware.nsx_method('add_neutron_nsx_router_mapping',
-                                     module_name='dbexts.db')).start()
+        mock.patch(nsx_method('add_neutron_nsx_router_mapping',
+                              module_name='dbexts.db')).start()
 
     def _verify_get_nsx_switch_and_port_id(self, exp_ls_uuid, exp_lp_uuid):
         # The nsxlib and db calls are mocked, therefore the cluster
@@ -104,8 +101,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         exp_lp_uuid = uuidutils.generate_uuid()
         ret_value = None, exp_lp_uuid
         self._mock_port_mapping_db_calls(ret_value)
-        with mock.patch(vmware.nsx_method('query_lswitch_lports',
-                                          module_name='nsxlib.switch'),
+        with mock.patch(nsx_method('query_lswitch_lports',
+                                   module_name='nsxlib.switch'),
                         return_value=[{'uuid': exp_lp_uuid,
                                        '_relations': {
                                            'LogicalSwitchConfig': {
@@ -120,8 +117,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         exp_lp_uuid = uuidutils.generate_uuid()
         ret_value = None, None
         self._mock_port_mapping_db_calls(ret_value)
-        with mock.patch(vmware.nsx_method('query_lswitch_lports',
-                                          module_name='nsxlib.switch'),
+        with mock.patch(nsx_method('query_lswitch_lports',
+                                   module_name='nsxlib.switch'),
                         return_value=[{'uuid': exp_lp_uuid,
                                        '_relations': {
                                            'LogicalSwitchConfig': {
@@ -134,8 +131,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # mappings are not found both in the db and the backend
         ret_value = None, None
         self._mock_port_mapping_db_calls(ret_value)
-        with mock.patch(vmware.nsx_method('query_lswitch_lports',
-                                          module_name='nsxlib.switch'),
+        with mock.patch(nsx_method('query_lswitch_lports',
+                                   module_name='nsxlib.switch'),
                         return_value=[]):
             self._verify_get_nsx_switch_and_port_id(None, None)
 
@@ -151,8 +148,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # found for a given network identifier
         exp_ls_uuids = [uuidutils.generate_uuid()]
         self._mock_network_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('get_lswitches',
-                                          module_name='nsxlib.switch'),
+        with mock.patch(nsx_method('get_lswitches',
+                                   module_name='nsxlib.switch'),
                         return_value=[{'uuid': uuid}
                                       for uuid in exp_ls_uuids]):
             self._verify_get_nsx_switch_ids(exp_ls_uuids)
@@ -161,8 +158,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # This test verifies that the function returns None if the mappings
         # are not found both in the db and in the backend
         self._mock_network_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('get_lswitches',
-                                          module_name='nsxlib.switch'),
+        with mock.patch(nsx_method('get_lswitches',
+                                   module_name='nsxlib.switch'),
                         return_value=[]):
             self._verify_get_nsx_switch_ids(None)
 
@@ -178,8 +175,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # found for a given port identifier
         exp_lr_uuid = uuidutils.generate_uuid()
         self._mock_router_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('query_lrouters',
-                                          module_name='nsxlib.router'),
+        with mock.patch(nsx_method('query_lrouters',
+                                   module_name='nsxlib.router'),
                         return_value=[{'uuid': exp_lr_uuid}]):
             self._verify_get_nsx_router_id(exp_lr_uuid)
 
@@ -187,8 +184,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # This test verifies that the function returns None if the mapping
         # are not found both in the db and in the backend
         self._mock_router_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('query_lrouters',
-                                          module_name='nsxlib.router'),
+        with mock.patch(nsx_method('query_lrouters',
+                                   module_name='nsxlib.router'),
                         return_value=[]):
             self._verify_get_nsx_router_id(None)
 
@@ -220,7 +217,7 @@ class NsxUtilsTestCase(base.BaseTestCase):
         filters = {"tag": 'foo', "tag_scope": "scope_foo"}
         result = nsxlib._build_uri_path('RESOURCE', filters=filters)
         expected = (
-            "%s/%s?tag=foo&tag_scope=scope_foo" %
+            "%s/%s?tag_scope=scope_foo&tag=foo" %
             (nsxlib.URI_PREFIX, 'RESOURCE'))
         self.assertEqual(expected, result)
 
@@ -270,11 +267,11 @@ class NsxUtilsTestCase(base.BaseTestCase):
         self.assertEqual(expected, result)
 
     def _mock_sec_group_mapping_db_calls(self, ret_value):
-        mock.patch(vmware.nsx_method('get_nsx_security_group_id',
-                                     module_name='dbexts.db'),
+        mock.patch(nsx_method('get_nsx_security_group_id',
+                              module_name='dbexts.db'),
                    return_value=ret_value).start()
-        mock.patch(vmware.nsx_method('add_neutron_nsx_security_group_mapping',
-                                     module_name='dbexts.db')).start()
+        mock.patch(nsx_method('add_neutron_nsx_security_group_mapping',
+                              module_name='dbexts.db')).start()
 
     def _verify_get_nsx_sec_profile_id(self, exp_sec_prof_uuid):
         # The nsxlib and db calls are  mocked, therefore the cluster
@@ -295,8 +292,8 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # found for a given security profile identifier
         exp_sec_prof_uuid = uuidutils.generate_uuid()
         self._mock_sec_group_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('query_security_profiles',
-                                          module_name='nsxlib.secgroup'),
+        with mock.patch(nsx_method('query_security_profiles',
+                                   module_name='nsxlib.secgroup'),
                         return_value=[{'uuid': exp_sec_prof_uuid}]):
             self._verify_get_nsx_sec_profile_id(exp_sec_prof_uuid)
 
@@ -304,61 +301,10 @@ class NsxUtilsTestCase(base.BaseTestCase):
         # This test verifies that the function returns None if the mapping
         # are not found both in the db and in the backend
         self._mock_sec_group_mapping_db_calls(None)
-        with mock.patch(vmware.nsx_method('query_security_profiles',
-                                          module_name='nsxlib.secgroup'),
+        with mock.patch(nsx_method('query_security_profiles',
+                                   module_name='nsxlib.secgroup'),
                         return_value=[]):
             self._verify_get_nsx_sec_profile_id(None)
-
-    def test_convert_to_nsx_transport_zones_no_multiprovider(self):
-        test_net = {'id': 'whatever'}
-        results = nsx_utils.convert_to_nsx_transport_zones(
-            'meh_zone_uuid', test_net,
-            default_transport_type='meh_transport_type')
-        self.assertEqual(1, len(results))
-        result = results[0]
-        self.assertEqual('meh_zone_uuid', result['zone_uuid'])
-        self.assertEqual('meh_transport_type', result['transport_type'])
-
-    def _verify_nsx_transport_zones(self, results):
-        self.assertEqual(2, len(results))
-        result_1 = results[0]
-        self.assertEqual(utils.NetworkTypes.BRIDGE,
-                         result_1['transport_type'])
-        self.assertEqual([{'transport': 66}],
-                         result_1['binding_config']['vlan_translation'])
-        self.assertEqual('whatever_tz_1', result_1['zone_uuid'])
-        result_2 = results[1]
-        self.assertEqual(utils.NetworkTypes.STT,
-                         result_2['transport_type'])
-        self.assertNotIn('binding_config', result_2)
-        self.assertEqual('whatever_tz_2', result_2['zone_uuid'])
-
-    def test_convert_to_nsx_transport_zones_with_bindings(self):
-        binding_1 = models.TzNetworkBinding(
-            'whatever',
-            utils.NetworkTypes.VLAN,
-            'whatever_tz_1',
-            66)
-        binding_2 = models.TzNetworkBinding(
-            'whatever',
-            utils.NetworkTypes.STT,
-            'whatever_tz_2',
-            None)
-        results = nsx_utils.convert_to_nsx_transport_zones(
-            'meh_zone_uuid', None, bindings=[binding_1, binding_2])
-        self._verify_nsx_transport_zones(results)
-
-    def test_convert_to_nsx_transport_zones_with_multiprovider(self):
-        segments = [
-            {pnet.NETWORK_TYPE: utils.NetworkTypes.VLAN,
-             pnet.PHYSICAL_NETWORK: 'whatever_tz_1',
-             pnet.SEGMENTATION_ID: 66},
-            {pnet.NETWORK_TYPE: utils.NetworkTypes.STT,
-             pnet.PHYSICAL_NETWORK: 'whatever_tz_2'},
-        ]
-        results = nsx_utils.convert_to_nsx_transport_zones(
-            'meh_zone_uuid', {'id': 'whatever_net', mpnet.SEGMENTS: segments})
-        self._verify_nsx_transport_zones(results)
 
 
 class ClusterManagementTestCase(nsx_base.NsxlibTestCase):

@@ -11,6 +11,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Ronak Shah, Nuage Networks, Alcatel-Lucent USA Inc.
 
 from neutron.common import constants
 
@@ -22,5 +24,3 @@ AUTO_CREATE_PORT_OWNERS = [
 ]
 
 NOVA_PORT_OWNER_PREF = 'compute:'
-
-SR_TYPE_FLOATING = "FLOATING"

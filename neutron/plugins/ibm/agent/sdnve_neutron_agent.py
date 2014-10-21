@@ -13,28 +13,28 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mohammad Banikazemi, IBM Corp.
 
 
 import socket
-import sys
 import time
 
 import eventlet
-eventlet.monkey_patch()
-
 from oslo.config import cfg
 
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import ovs_lib
 from neutron.agent import rpc as agent_rpc
-from neutron.common import config as common_config
+from neutron.common import config as logging_config
 from neutron.common import constants as n_const
-from neutron.common import rpc as n_rpc
+from neutron.common import legacy
 from neutron.common import topics
 from neutron.common import utils as n_utils
 from neutron import context
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import loopingcall
+from neutron.openstack.common.rpc import dispatcher
 from neutron.plugins.ibm.common import config  # noqa
 from neutron.plugins.ibm.common import constants
 
@@ -46,10 +46,11 @@ class SdnvePluginApi(agent_rpc.PluginApi):
 
     def sdnve_info(self, context, info):
         return self.call(context,
-                         self.make_msg('sdnve_info', info=info))
+                         self.make_msg('sdnve_info', info=info),
+                         topic=self.topic)
 
 
-class SdnveNeutronAgent(n_rpc.RpcCallback):
+class SdnveNeutronAgent():
 
     RPC_API_VERSION = '1.1'
 
@@ -68,7 +69,6 @@ class SdnveNeutronAgent(n_rpc.RpcCallback):
         :param controller_ip: Ip address of SDN-VE controller.
         '''
 
-        super(SdnveNeutronAgent, self).__init__()
         self.root_helper = root_helper
         self.int_bridge_name = integ_br
         self.controller_ip = controller_ip
@@ -120,10 +120,10 @@ class SdnveNeutronAgent(n_rpc.RpcCallback):
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.PLUGIN)
 
         self.context = context.get_admin_context_without_session()
-        self.endpoints = [self]
+        self.dispatcher = self.create_rpc_dispatcher()
         consumers = [[constants.INFO, topics.UPDATE]]
 
-        self.connection = agent_rpc.create_consumers(self.endpoints,
+        self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)
         if self.polling_interval:
@@ -151,6 +151,9 @@ class SdnveNeutronAgent(n_rpc.RpcCallback):
                                              "connection-mode",
                                              "out-of-band")
 
+    def create_rpc_dispatcher(self):
+        return dispatcher.RpcDispatcher([self])
+
     def setup_integration_br(self, bridge_name, reset_br, out_of_band,
                              controller_ip=None):
         '''Sets up the integration bridge.
@@ -159,7 +162,7 @@ class SdnveNeutronAgent(n_rpc.RpcCallback):
         Otherwise, creates the bridge if not already existing.
         :param bridge_name: the name of the integration bridge.
         :param reset_br: A boolean to rest the bridge if True.
-        :param out_of_band: A boolean indicating controller is out of band.
+        :param out_of_band: A boolean inidicating controller is out of band.
         :param controller_ip: IP address to use as the bridge controller.
         :returns: the integration bridge
         '''
@@ -250,9 +253,11 @@ def create_agent_config_map(config):
 
 
 def main():
+    eventlet.monkey_patch()
     cfg.CONF.register_opts(ip_lib.OPTS)
-    common_config.init(sys.argv[1:])
-    common_config.setup_logging()
+    cfg.CONF(project='neutron')
+    logging_config.setup_logging(cfg.CONF)
+    legacy.modernize_quantum_config(cfg.CONF)
 
     try:
         agent_config = create_agent_config_map(cfg.CONF)

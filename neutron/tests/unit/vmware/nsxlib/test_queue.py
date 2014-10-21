@@ -18,7 +18,6 @@ import mock
 
 from neutron.common import exceptions
 from neutron.plugins.vmware.api_client import exception as api_exc
-from neutron.plugins.vmware import nsxlib
 from neutron.plugins.vmware.nsxlib import queue as queuelib
 from neutron.tests.unit.vmware.nsxlib import base
 
@@ -36,9 +35,9 @@ class TestLogicalQueueLib(base.NsxlibTestCase):
     def test_create_and_get_lqueue(self):
         queue_id = queuelib.create_lqueue(
             self.fake_cluster, self.fake_queue)
-        queue_res = nsxlib.do_request(
+        queue_res = queuelib.do_request(
             'GET',
-            nsxlib._build_uri_path('lqueue', resource_id=queue_id),
+            queuelib._build_uri_path('lqueue', resource_id=queue_id),
             cluster=self.fake_cluster)
         self.assertEqual(queue_id, queue_res['uuid'])
         self.assertEqual('fake_queue', queue_res['display_name'])
@@ -47,7 +46,7 @@ class TestLogicalQueueLib(base.NsxlibTestCase):
         def raise_nsx_exc(*args, **kwargs):
             raise api_exc.NsxApiException()
 
-        with mock.patch.object(nsxlib, 'do_request', new=raise_nsx_exc):
+        with mock.patch.object(queuelib, 'do_request', new=raise_nsx_exc):
             self.assertRaises(
                 exceptions.NeutronException, queuelib.create_lqueue,
                 self.fake_cluster, self.fake_queue)
@@ -57,9 +56,9 @@ class TestLogicalQueueLib(base.NsxlibTestCase):
             self.fake_cluster, self.fake_queue)
         queuelib.delete_lqueue(self.fake_cluster, queue_id)
         self.assertRaises(exceptions.NotFound,
-                          nsxlib.do_request,
+                          queuelib.do_request,
                           'GET',
-                          nsxlib._build_uri_path(
+                          queuelib._build_uri_path(
                               'lqueue', resource_id=queue_id),
                           cluster=self.fake_cluster)
 

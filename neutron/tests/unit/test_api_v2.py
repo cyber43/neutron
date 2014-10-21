@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -23,28 +25,33 @@ from webob import exc
 import webtest
 
 from neutron.api import api_common
-from neutron.api import extensions
+from neutron.api.extensions import PluginAwareExtensionManager
 from neutron.api.rpc.agentnotifiers import dhcp_rpc_agent_api
 from neutron.api.v2 import attributes
 from neutron.api.v2 import base as v2_base
 from neutron.api.v2 import router
+from neutron.common import config
 from neutron.common import exceptions as n_exc
 from neutron import context
-from neutron import manager
+from neutron.manager import NeutronManager
+from neutron.openstack.common.notifier import api as notifer_api
 from neutron.openstack.common import policy as common_policy
 from neutron.openstack.common import uuidutils
 from neutron import policy
 from neutron import quota
 from neutron.tests import base
-from neutron.tests import fake_notifier
 from neutron.tests.unit import testlib_api
-from neutron.tests.unit import testlib_plugin
 
 
 ROOTDIR = os.path.dirname(os.path.dirname(__file__))
+ETCDIR = os.path.join(ROOTDIR, 'etc')
 EXTDIR = os.path.join(ROOTDIR, 'unit/extensions')
 
 _uuid = uuidutils.generate_uuid
+
+
+def etcdir(*p):
+    return os.path.join(ETCDIR, *p)
 
 
 def _get_path(resource, id=None, action=None, fmt=None):
@@ -87,15 +94,16 @@ class ResourceIndexTestCase(base.BaseTestCase):
         self.assertEqual(link['rel'], 'self')
 
 
-class APIv2TestBase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
+class APIv2TestBase(base.BaseTestCase):
     def setUp(self):
         super(APIv2TestBase, self).setUp()
 
         plugin = 'neutron.neutron_plugin_base_v2.NeutronPluginBaseV2'
         # Ensure existing ExtensionManager is not used
-        extensions.PluginAwareExtensionManager._instance = None
+        PluginAwareExtensionManager._instance = None
         # Create the default configurations
-        self.config_parse()
+        args = ['--config-file', etcdir('neutron.conf.test')]
+        config.parse(args=args)
         # Update the plugin
         self.setup_coreplugin(plugin)
         cfg.CONF.set_override('allow_pagination', True)
@@ -105,6 +113,7 @@ class APIv2TestBase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
         instance = self.plugin.return_value
         instance._NeutronPluginBaseV2__native_pagination_support = True
         instance._NeutronPluginBaseV2__native_sorting_support = True
+        self.addCleanup(self._plugin_patcher.stop)
 
         api = router.APIRouter()
         self.api = webtest.TestApp(api)
@@ -133,10 +142,8 @@ class APIv2TestCase(APIv2TestBase):
     def _do_field_list(self, resource, base_fields):
         attr_info = attributes.RESOURCE_ATTRIBUTE_MAP[resource]
         policy_attrs = [name for (name, info) in attr_info.items()
-                        if info.get('required_by_policy')]
-        for name, info in attr_info.items():
-            if info.get('primary_key'):
-                policy_attrs.append(name)
+                        if info.get('required_by_policy') or
+                        info.get('primary_key')]
         fields = base_fields
         fields.extend(policy_attrs)
         return fields
@@ -144,8 +151,8 @@ class APIv2TestCase(APIv2TestBase):
     def _get_collection_kwargs(self, skipargs=[], **kwargs):
         args_list = ['filters', 'fields', 'sorts', 'limit', 'marker',
                      'page_reverse']
-        args_dict = dict(
-            (arg, mock.ANY) for arg in set(args_list) - set(skipargs))
+        args_dict = dict((arg, mock.ANY)
+                         for arg in set(args_list) - set(skipargs))
         args_dict.update(kwargs)
         return args_dict
 
@@ -790,7 +797,11 @@ class JSONV2TestCase(APIv2TestBase, testlib_api.WebTestCase):
 
     def test_create_no_keystone_env(self):
         data = {'name': 'net1'}
-        self._test_create_failure_bad_request('networks', data)
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, exc.HTTPBadRequest.code)
 
     def test_create_with_keystone_env(self):
         tenant_id = _uuid()
@@ -822,25 +833,45 @@ class JSONV2TestCase(APIv2TestBase, testlib_api.WebTestCase):
         tenant_id = _uuid()
         data = {'network': {'name': 'net1', 'tenant_id': tenant_id}}
         env = {'neutron.context': context.Context('', tenant_id + "bad")}
-        self._test_create_failure_bad_request('networks', data,
-                                              extra_environ=env)
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True,
+                            extra_environ=env)
+        self.assertEqual(res.status_int, exc.HTTPBadRequest.code)
 
     def test_create_no_body(self):
         data = {'whoa': None}
-        self._test_create_failure_bad_request('networks', data)
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, exc.HTTPBadRequest.code)
 
     def test_create_no_resource(self):
         data = {}
-        self._test_create_failure_bad_request('networks', data)
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, exc.HTTPBadRequest.code)
 
     def test_create_missing_attr(self):
         data = {'port': {'what': 'who', 'tenant_id': _uuid()}}
-        self._test_create_failure_bad_request('ports', data)
+        res = self.api.post(_get_path('ports', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, 400)
 
     def test_create_readonly_attr(self):
         data = {'network': {'name': 'net1', 'tenant_id': _uuid(),
                             'status': "ACTIVE"}}
-        self._test_create_failure_bad_request('networks', data)
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, 400)
 
     def test_create_bulk(self):
         data = {'networks': [{'name': 'net1',
@@ -863,28 +894,31 @@ class JSONV2TestCase(APIv2TestBase, testlib_api.WebTestCase):
                             content_type='application/' + self.fmt)
         self.assertEqual(res.status_int, exc.HTTPCreated.code)
 
-    def _test_create_failure_bad_request(self, resource, data, **kwargs):
-        res = self.api.post(_get_path(resource, fmt=self.fmt),
+    def test_create_bulk_no_networks(self):
+        data = {'networks': []}
+        res = self.api.post(_get_path('networks', fmt=self.fmt),
                             self.serialize(data),
                             content_type='application/' + self.fmt,
-                            expect_errors=True, **kwargs)
+                            expect_errors=True)
         self.assertEqual(res.status_int, exc.HTTPBadRequest.code)
-
-    def test_create_bulk_networks_none(self):
-        self._test_create_failure_bad_request('networks', {'networks': None})
-
-    def test_create_bulk_networks_empty_list(self):
-        self._test_create_failure_bad_request('networks', {'networks': []})
 
     def test_create_bulk_missing_attr(self):
         data = {'ports': [{'what': 'who', 'tenant_id': _uuid()}]}
-        self._test_create_failure_bad_request('ports', data)
+        res = self.api.post(_get_path('ports', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, 400)
 
     def test_create_bulk_partial_body(self):
         data = {'ports': [{'device_id': 'device_1',
                            'tenant_id': _uuid()},
                           {'tenant_id': _uuid()}]}
-        self._test_create_failure_bad_request('ports', data)
+        res = self.api.post(_get_path('ports', fmt=self.fmt),
+                            self.serialize(data),
+                            content_type='application/' + self.fmt,
+                            expect_errors=True)
+        self.assertEqual(res.status_int, 400)
 
     def test_create_attr_not_specified(self):
         net_id = _uuid()
@@ -1091,23 +1125,25 @@ class JSONV2TestCase(APIv2TestBase, testlib_api.WebTestCase):
         self.assertEqual(res.status_int, 400)
 
 
-class SubresourceTest(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
+class SubresourceTest(base.BaseTestCase):
     def setUp(self):
         super(SubresourceTest, self).setUp()
 
         plugin = 'neutron.tests.unit.test_api_v2.TestSubresourcePlugin'
-        extensions.PluginAwareExtensionManager._instance = None
+        PluginAwareExtensionManager._instance = None
 
         # Save the global RESOURCE_ATTRIBUTE_MAP
         self.saved_attr_map = {}
         for resource, attrs in attributes.RESOURCE_ATTRIBUTE_MAP.iteritems():
             self.saved_attr_map[resource] = attrs.copy()
 
-        self.config_parse()
+        args = ['--config-file', etcdir('neutron.conf.test')]
+        config.parse(args=args)
         self.setup_coreplugin(plugin)
 
         self._plugin_patcher = mock.patch(plugin, autospec=True)
         self.plugin = self._plugin_patcher.start()
+        self.addCleanup(self._plugin_patcher.stop)
 
         router.SUB_RESOURCES['dummy'] = {
             'collection_name': 'dummies',
@@ -1172,18 +1208,6 @@ class SubresourceTest(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
                                                               network_id='id1',
                                                               dummy=body)
 
-    def test_update_subresource_to_none(self):
-        instance = self.plugin.return_value
-
-        dummy_id = _uuid()
-        body = {'dummy': {}}
-        self.api.put_json('/networks/id1' + _get_path('dummies', id=dummy_id),
-                          body)
-        instance.update_network_dummy.assert_called_once_with(mock.ANY,
-                                                              dummy_id,
-                                                              network_id='id1',
-                                                              dummy=body)
-
     def test_delete_sub_resource(self):
         instance = self.plugin.return_value
 
@@ -1228,42 +1252,41 @@ class V2Views(base.BaseTestCase):
 
 
 class NotificationTest(APIv2TestBase):
-
-    def setUp(self):
-        super(NotificationTest, self).setUp()
-        fake_notifier.reset()
-
-    def _resource_op_notifier(self, opname, resource, expected_errors=False):
+    def _resource_op_notifier(self, opname, resource, expected_errors=False,
+                              notification_level='INFO'):
         initial_input = {resource: {'name': 'myname'}}
         instance = self.plugin.return_value
         instance.get_networks.return_value = initial_input
         instance.get_networks_count.return_value = 0
         expected_code = exc.HTTPCreated.code
-        if opname == 'create':
-            initial_input[resource]['tenant_id'] = _uuid()
-            res = self.api.post_json(
-                _get_path('networks'),
-                initial_input, expect_errors=expected_errors)
-        if opname == 'update':
-            res = self.api.put_json(
-                _get_path('networks', id=_uuid()),
-                initial_input, expect_errors=expected_errors)
-            expected_code = exc.HTTPOk.code
-        if opname == 'delete':
-            initial_input[resource]['tenant_id'] = _uuid()
-            res = self.api.delete(
-                _get_path('networks', id=_uuid()),
-                expect_errors=expected_errors)
-            expected_code = exc.HTTPNoContent.code
-
-        expected_events = ('.'.join([resource, opname, "start"]),
-                           '.'.join([resource, opname, "end"]))
-        self.assertEqual(len(fake_notifier.NOTIFICATIONS),
-                         len(expected_events))
-        for msg, event in zip(fake_notifier.NOTIFICATIONS, expected_events):
-            self.assertEqual('INFO', msg['priority'])
-            self.assertEqual(event, msg['event_type'])
-
+        with mock.patch.object(notifer_api, 'notify') as mynotifier:
+            if opname == 'create':
+                initial_input[resource]['tenant_id'] = _uuid()
+                res = self.api.post_json(
+                    _get_path('networks'),
+                    initial_input, expect_errors=expected_errors)
+            if opname == 'update':
+                res = self.api.put_json(
+                    _get_path('networks', id=_uuid()),
+                    initial_input, expect_errors=expected_errors)
+                expected_code = exc.HTTPOk.code
+            if opname == 'delete':
+                initial_input[resource]['tenant_id'] = _uuid()
+                res = self.api.delete(
+                    _get_path('networks', id=_uuid()),
+                    expect_errors=expected_errors)
+                expected_code = exc.HTTPNoContent.code
+            expected = [mock.call(mock.ANY,
+                                  'network.' + cfg.CONF.host,
+                                  resource + "." + opname + ".start",
+                                  notification_level,
+                                  mock.ANY),
+                        mock.call(mock.ANY,
+                                  'network.' + cfg.CONF.host,
+                                  resource + "." + opname + ".end",
+                                  notification_level,
+                                  mock.ANY)]
+            self.assertEqual(expected, mynotifier.call_args_list)
         self.assertEqual(res.status_int, expected_code)
 
     def test_network_create_notifer(self):
@@ -1274,6 +1297,11 @@ class NotificationTest(APIv2TestBase):
 
     def test_network_update_notifer(self):
         self._resource_op_notifier('update', 'network')
+
+    def test_network_create_notifer_with_log_level(self):
+        cfg.CONF.set_override('default_notification_level', 'DEBUG')
+        self._resource_op_notifier('create', 'network',
+                                   notification_level='DEBUG')
 
 
 class DHCPNotificationTest(APIv2TestBase):
@@ -1370,13 +1398,13 @@ class QuotaTest(APIv2TestBase):
         self.assertEqual(res.status_int, exc.HTTPCreated.code)
 
 
-class ExtensionTestCase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
+class ExtensionTestCase(base.BaseTestCase):
     def setUp(self):
         super(ExtensionTestCase, self).setUp()
         plugin = 'neutron.neutron_plugin_base_v2.NeutronPluginBaseV2'
 
         # Ensure existing ExtensionManager is not used
-        extensions.PluginAwareExtensionManager._instance = None
+        PluginAwareExtensionManager._instance = None
 
         # Save the global RESOURCE_ATTRIBUTE_MAP
         self.saved_attr_map = {}
@@ -1384,7 +1412,8 @@ class ExtensionTestCase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
             self.saved_attr_map[resource] = attrs.copy()
 
         # Create the default configurations
-        self.config_parse()
+        args = ['--config-file', etcdir('neutron.conf.test')]
+        config.parse(args=args)
 
         # Update the plugin and extensions path
         self.setup_coreplugin(plugin)
@@ -1394,8 +1423,7 @@ class ExtensionTestCase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
         self.plugin = self._plugin_patcher.start()
 
         # Instantiate mock plugin and enable the V2attributes extension
-        manager.NeutronManager.get_plugin().supported_extension_aliases = (
-            ["v2attrs"])
+        NeutronManager.get_plugin().supported_extension_aliases = ["v2attrs"]
 
         api = router.APIRouter()
         self.api = webtest.TestApp(api)
@@ -1406,6 +1434,7 @@ class ExtensionTestCase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
 
     def tearDown(self):
         super(ExtensionTestCase, self).tearDown()
+        self._plugin_patcher.stop()
         self.api = None
         self.plugin = None
         # Restore the global RESOURCE_ATTRIBUTE_MAP
@@ -1441,22 +1470,22 @@ class ExtensionTestCase(base.BaseTestCase, testlib_plugin.PluginSetupHelper):
 
 
 class TestSubresourcePlugin():
-    def get_network_dummies(self, context, network_id,
-                            filters=None, fields=None):
-        return []
+        def get_network_dummies(self, context, network_id,
+                                filters=None, fields=None):
+            return []
 
-    def get_network_dummy(self, context, id, network_id,
-                          fields=None):
-        return {}
+        def get_network_dummy(self, context, id, network_id,
+                              fields=None):
+            return {}
 
-    def create_network_dummy(self, context, network_id, dummy):
-        return {}
+        def create_network_dummy(self, context, network_id, dummy):
+            return {}
 
-    def update_network_dummy(self, context, id, network_id, dummy):
-        return {}
+        def update_network_dummy(self, context, id, network_id, dummy):
+            return {}
 
-    def delete_network_dummy(self, context, id, network_id):
-        return
+        def delete_network_dummy(self, context, id, network_id):
+            return
 
 
 class ListArgsTestCase(base.BaseTestCase):
@@ -1510,7 +1539,7 @@ class FiltersTestCase(base.BaseTestCase):
         }
         expect_val = {'foo': {'key': ['2', '4']}, 'bar': ['3'], 'qux': ['1']}
         actual_val = api_common.get_filters(request, attr_info)
-        self.assertOrderedEqual(expect_val, actual_val)
+        self.assertEqual(actual_val, expect_val)
 
     def test_attr_info_with_convert_to(self):
         path = '/?foo=4&bar=3&baz=2&qux=1'

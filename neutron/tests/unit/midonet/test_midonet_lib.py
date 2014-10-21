@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (C) 2012 Midokura Japan K.K.
 # Copyright (C) 2013 Midokura PTE LTD
 # All Rights Reserved.
@@ -13,15 +15,18 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-import sys
+#
+# @author: Ryu Ishimoto, Midokura Japan KK
+# @author: Tomoe Sugihara, Midokura Japan KK
 
 import mock
+import sys
+sys.modules["midonetclient"] = mock.Mock()
 import testtools
 import webob.exc as w_exc
 
 from neutron.openstack.common import uuidutils
-with mock.patch.dict(sys.modules, {'midonetclient': mock.Mock()}):
-    from neutron.plugins.midonet import midonet_lib
+from neutron.plugins.midonet import midonet_lib
 import neutron.tests.unit.midonet.mock_lib as mock_lib
 
 
@@ -83,27 +88,24 @@ class MidoClientTestCase(testtools.TestCase):
 
         dhcp_call = mock.call.add_bridge_dhcp(bridge, gateway_ip, cidr,
                                               host_rts=host_rts,
-                                              dns_nservers=dns_servers)
+                                              dns_servers=dns_servers)
 
         self.client.create_dhcp(bridge, gateway_ip, cidr, host_rts=host_rts,
                                 dns_servers=dns_servers)
-        self.mock_api.assert_has_calls([dhcp_call])
+
+        bridge.assert_has_call(dhcp_call)
 
     def test_delete_dhcp(self):
 
         bridge = mock.Mock()
-        subnet1 = mock.Mock()
-        subnet1.get_subnet_prefix.return_value = "10.0.0.0"
-        subnet1.get_subnet_length.return_value = "16"
-        subnet2 = mock.Mock()
-        subnet2.get_subnet_prefix.return_value = "10.0.0.0"
-        subnet2.get_subnet_length.return_value = "24"
-        subnets = mock.MagicMock(return_value=[subnet1, subnet2])
+        subnet = mock.Mock()
+        subnet.get_subnet_prefix.return_value = "10.0.0.0"
+        subnets = mock.MagicMock(return_value=[subnet])
         bridge.get_dhcp_subnets.side_effect = subnets
         self.client.delete_dhcp(bridge, "10.0.0.0/24")
         bridge.assert_has_calls(mock.call.get_dhcp_subnets)
-        self.assertFalse(subnet1.delete.called)
-        subnet2.delete.assert_called_once_with()
+        subnet.assert_has_calls([mock.call.get_subnet_prefix(),
+                                mock.call.delete()])
 
     def test_add_dhcp_host(self):
 

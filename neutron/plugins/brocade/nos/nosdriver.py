@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 Brocade Communications System, Inc.
 # All rights reserved.
 #
@@ -12,6 +14,10 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# Authors:
+# Varma Bhupatiraju (vbhupati@#brocade.com)
+# Shiv Haris (sharis@brocade.com)
 
 
 """Brocade NOS Driver implements NETCONF over SSHv2 for

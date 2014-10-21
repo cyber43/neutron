@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,23 +21,23 @@ from neutron.agent.linux import ovs_lib  # noqa
 
 ovs_opts = [
     cfg.StrOpt('integration_bridge', default='br-int',
-               help=_("Integration bridge to use.")),
+               help=_("Integration bridge to use")),
     cfg.StrOpt('openflow_rest_api', default='127.0.0.1:8080',
-               help=_("OpenFlow REST API location.")),
+               help=_("OpenFlow REST API location")),
     cfg.IntOpt('tunnel_key_min', default=1,
-               help=_("Minimum tunnel ID to use.")),
+               help=_("Minimum tunnel ID to use")),
     cfg.IntOpt('tunnel_key_max', default=0xffffff,
-               help=_("Maximum tunnel ID to use.")),
-    cfg.StrOpt('tunnel_ip',
-               help=_("Tunnel IP to use.")),
-    cfg.StrOpt('tunnel_interface',
-               help=_("Tunnel interface to use.")),
+               help=_("Maximum tunnel ID to use")),
+    cfg.StrOpt('tunnel_ip', default=None,
+               help=_("Tunnel IP to use")),
+    cfg.StrOpt('tunnel_interface', default=None,
+               help=_("Tunnel interface to use")),
     cfg.IntOpt('ovsdb_port', default=6634,
-               help=_("OVSDB port to connect to.")),
-    cfg.StrOpt('ovsdb_ip',
-               help=_("OVSDB IP to connect to.")),
-    cfg.StrOpt('ovsdb_interface',
-               help=_("OVSDB interface to connect to.")),
+               help=_("OVSDB port to connect to")),
+    cfg.StrOpt('ovsdb_ip', default=None,
+               help=_("OVSDB IP to connect to")),
+    cfg.StrOpt('ovsdb_interface', default=None,
+               help=_("OVSDB interface to connect to")),
 ]
 
 agent_opts = [

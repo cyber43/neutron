@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -13,10 +15,24 @@
 # under the License.
 
 from neutron.api.rpc.agentnotifiers import metering_rpc_agent_api
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as p_rpc
 from neutron.common import topics
 from neutron.db.metering import metering_db
-from neutron.db.metering import metering_rpc
+from neutron.openstack.common import rpc
+
+
+class MeteringCallbacks(metering_db.MeteringDbMixin):
+
+    RPC_API_VERSION = '1.0'
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def create_rpc_dispatcher(self):
+        return p_rpc.PluginRpcDispatcher([self])
+
+    def get_sync_data_metering(self, context, **kwargs):
+        return super(MeteringCallbacks, self).get_sync_data_metering(context)
 
 
 class MeteringPlugin(metering_db.MeteringDbMixin):
@@ -26,12 +42,14 @@ class MeteringPlugin(metering_db.MeteringDbMixin):
     def __init__(self):
         super(MeteringPlugin, self).__init__()
 
-        self.endpoints = [metering_rpc.MeteringRpcCallbacks(self)]
+        self.callbacks = MeteringCallbacks(self)
 
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.conn.create_consumer(
-            topics.METERING_PLUGIN, self.endpoints, fanout=False)
-        self.conn.consume_in_threads()
+            topics.METERING_PLUGIN,
+            self.callbacks.create_rpc_dispatcher(),
+            fanout=False)
+        self.conn.consume_in_thread()
 
         self.meter_rpc = metering_rpc_agent_api.MeteringAgentNotifyAPI()
 

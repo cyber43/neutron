@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013, Nachi Ueno, NTT I3, Inc.
 # All Rights Reserved.
 #
@@ -21,17 +23,17 @@ import shutil
 import jinja2
 import netaddr
 from oslo.config import cfg
-from oslo import messaging
 import six
 
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron import context
-from neutron.openstack.common.gettextutils import _LE
 from neutron.openstack.common import lockutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import loopingcall
+from neutron.openstack.common import rpc
+from neutron.openstack.common.rpc import proxy
 from neutron.plugins.common import constants
 from neutron.plugins.common import utils as plugin_utils
 from neutron.services.vpn.common import topics
@@ -245,7 +247,7 @@ class BaseSwanProcess():
                 self.start()
         except RuntimeError:
             LOG.exception(
-                _LE("Failed to enable vpn process on router %s"),
+                _("Failed to enable vpn process on router %s"),
                 self.id)
 
     def disable(self):
@@ -256,7 +258,7 @@ class BaseSwanProcess():
             self.remove_config()
         except RuntimeError:
             LOG.exception(
-                _LE("Failed to disable vpn process on router %s"),
+                _("Failed to disable vpn process on router %s"),
                 self.id)
 
     @abc.abstractmethod
@@ -442,7 +444,7 @@ class OpenSwanProcess(BaseSwanProcess):
         self.connection_status = {}
 
 
-class IPsecVpnDriverApi(n_rpc.RpcProxy):
+class IPsecVpnDriverApi(proxy.RpcProxy):
     """IPSecVpnDriver RPC api."""
     IPSEC_PLUGIN_VERSION = '1.0'
 
@@ -455,7 +457,8 @@ class IPsecVpnDriverApi(n_rpc.RpcProxy):
         return self.call(context,
                          self.make_msg('get_vpn_services_on_host',
                                        host=host),
-                         version=self.IPSEC_PLUGIN_VERSION)
+                         version=self.IPSEC_PLUGIN_VERSION,
+                         topic=self.topic)
 
     def update_status(self, context, status):
         """Update local status.
@@ -466,7 +469,8 @@ class IPsecVpnDriverApi(n_rpc.RpcProxy):
         return self.cast(context,
                          self.make_msg('update_status',
                                        status=status),
-                         version=self.IPSEC_PLUGIN_VERSION)
+                         version=self.IPSEC_PLUGIN_VERSION,
+                         topic=self.topic)
 
 
 @six.add_metaclass(abc.ABCMeta)
@@ -476,7 +480,7 @@ class IPsecDriver(device_drivers.DeviceDriver):
     This class is designed for use with L3-agent now.
     However this driver will be used with another agent in future.
     so the use of "Router" is kept minimul now.
-    Instead of router_id,  we are using process_id in this code.
+    Insted of router_id,  we are using process_id in this code.
     """
 
     # history
@@ -484,16 +488,12 @@ class IPsecDriver(device_drivers.DeviceDriver):
 
     RPC_API_VERSION = '1.0'
 
-    # TODO(ihrachys): we can't use RpcCallback here due to inheritance
-    # issues
-    target = messaging.Target(version=RPC_API_VERSION)
-
     def __init__(self, agent, host):
         self.agent = agent
         self.conf = self.agent.conf
         self.root_helper = self.agent.root_helper
         self.host = host
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.context = context.get_admin_context_without_session()
         self.topic = topics.IPSEC_AGENT_TOPIC
         node_topic = '%s.%s' % (self.topic, self.host)
@@ -501,14 +501,19 @@ class IPsecDriver(device_drivers.DeviceDriver):
         self.processes = {}
         self.process_status_cache = {}
 
-        self.endpoints = [self]
-        self.conn.create_consumer(node_topic, self.endpoints, fanout=False)
-        self.conn.consume_in_threads()
+        self.conn.create_consumer(
+            node_topic,
+            self.create_rpc_dispatcher(),
+            fanout=False)
+        self.conn.consume_in_thread()
         self.agent_rpc = IPsecVpnDriverApi(topics.IPSEC_DRIVER_TOPIC, '1.0')
         self.process_status_cache_check = loopingcall.FixedIntervalLoopingCall(
             self.report_status, self.context)
         self.process_status_cache_check.start(
             interval=self.conf.ipsec.ipsec_status_check_interval)
+
+    def create_rpc_dispatcher(self):
+        return q_rpc.PluginRpcDispatcher([self])
 
     def _update_nat(self, vpnservice, func):
         """Setting up nat rule in iptables.
@@ -622,7 +627,7 @@ class IPsecDriver(device_drivers.DeviceDriver):
     def update_downed_connections(self, process_id, new_status):
         """Update info to be reported, if connections just went down.
 
-        If there is no longer any information for a connection, because it
+        If there is no longer any information for a connection (because it
         has been removed (e.g. due to an admin down of VPN service or IPSec
         connection), but there was previous status information for the
         connection, mark the connection as down for reporting purposes.

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
@@ -146,50 +148,45 @@ class TestSubProcessBase(base.BaseTestCase):
         super(TestSubProcessBase, self).setUp()
         self.execute_p = mock.patch('neutron.agent.linux.utils.execute')
         self.execute = self.execute_p.start()
+        self.addCleanup(self.execute_p.stop)
 
     def test_execute_wrapper(self):
         ip_lib.SubProcessBase._execute('o', 'link', ('list',), 'sudo')
 
         self.execute.assert_called_once_with(['ip', '-o', 'link', 'list'],
-                                             root_helper='sudo',
-                                             log_fail_as_error=True)
+                                             root_helper='sudo')
 
     def test_execute_wrapper_int_options(self):
         ip_lib.SubProcessBase._execute([4], 'link', ('list',))
 
         self.execute.assert_called_once_with(['ip', '-4', 'link', 'list'],
-                                             root_helper=None,
-                                             log_fail_as_error=True)
+                                             root_helper=None)
 
     def test_execute_wrapper_no_options(self):
         ip_lib.SubProcessBase._execute([], 'link', ('list',))
 
         self.execute.assert_called_once_with(['ip', 'link', 'list'],
-                                             root_helper=None,
-                                             log_fail_as_error=True)
+                                             root_helper=None)
 
     def test_run_no_namespace(self):
         base = ip_lib.SubProcessBase('sudo')
         base._run([], 'link', ('list',))
         self.execute.assert_called_once_with(['ip', 'link', 'list'],
-                                             root_helper=None,
-                                             log_fail_as_error=True)
+                                             root_helper=None)
 
     def test_run_namespace(self):
         base = ip_lib.SubProcessBase('sudo', 'ns')
         base._run([], 'link', ('list',))
         self.execute.assert_called_once_with(['ip', 'netns', 'exec', 'ns',
                                               'ip', 'link', 'list'],
-                                             root_helper='sudo',
-                                             log_fail_as_error=True)
+                                             root_helper='sudo')
 
     def test_as_root_namespace(self):
         base = ip_lib.SubProcessBase('sudo', 'ns')
         base._as_root([], 'link', ('list',))
         self.execute.assert_called_once_with(['ip', 'netns', 'exec', 'ns',
                                               'ip', 'link', 'list'],
-                                             root_helper='sudo',
-                                             log_fail_as_error=True)
+                                             root_helper='sudo')
 
     def test_as_root_no_root_helper(self):
         base = ip_lib.SubProcessBase()
@@ -203,6 +200,7 @@ class TestIpWrapper(base.BaseTestCase):
         super(TestIpWrapper, self).setUp()
         self.execute_p = mock.patch.object(ip_lib.IPWrapper, '_execute')
         self.execute = self.execute_p.start()
+        self.addCleanup(self.execute_p.stop)
 
     def test_get_devices(self):
         self.execute.return_value = '\n'.join(LINK_SAMPLE)
@@ -263,23 +261,14 @@ class TestIpWrapper(base.BaseTestCase):
         ip_lib.IPWrapper('sudo').add_tuntap('tap0')
         self.execute.assert_called_once_with('', 'tuntap',
                                              ('add', 'tap0', 'mode', 'tap'),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
+                                             'sudo', None)
 
     def test_add_veth(self):
         ip_lib.IPWrapper('sudo').add_veth('tap0', 'tap1')
         self.execute.assert_called_once_with('', 'link',
                                              ('add', 'tap0', 'type', 'veth',
                                               'peer', 'name', 'tap1'),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
-
-    def test_del_veth(self):
-        ip_lib.IPWrapper('sudo').del_veth('fpr-1234')
-        self.execute.assert_called_once_with('', 'link',
-                                             ('del', 'fpr-1234'),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
+                                             'sudo', None)
 
     def test_add_veth_with_namespaces(self):
         ns2 = 'ns2'
@@ -290,8 +279,7 @@ class TestIpWrapper(base.BaseTestCase):
                                              ('add', 'tap0', 'type', 'veth',
                                               'peer', 'name', 'tap1',
                                               'netns', ns2),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
+                                             'sudo', None)
 
     def test_get_device(self):
         dev = ip_lib.IPWrapper('sudo', 'ns').device('eth0')
@@ -303,14 +291,12 @@ class TestIpWrapper(base.BaseTestCase):
         with mock.patch.object(ip_lib, 'IPDevice') as ip_dev:
             ip = ip_lib.IPWrapper('sudo')
             with mock.patch.object(ip.netns, 'exists') as ns_exists:
-                with mock.patch('neutron.agent.linux.utils.execute'):
-                    ns_exists.return_value = False
-                    ip.ensure_namespace('ns')
-                    self.execute.assert_has_calls(
-                        [mock.call([], 'netns', ('add', 'ns'), 'sudo', None,
-                                   log_fail_as_error=True)])
-                    ip_dev.assert_has_calls([mock.call('lo', 'sudo', 'ns'),
-                                             mock.call().link.set_up()])
+                ns_exists.return_value = False
+                ip.ensure_namespace('ns')
+                self.execute.assert_has_calls(
+                    [mock.call([], 'netns', ('add', 'ns'), 'sudo', None)])
+                ip_dev.assert_has_calls([mock.call('lo', 'sudo', 'ns'),
+                                         mock.call().link.set_up()])
 
     def test_ensure_namespace_existing(self):
         with mock.patch.object(ip_lib, 'IpNetnsCommand') as ip_ns_cmd:
@@ -401,8 +387,7 @@ class TestIpWrapper(base.BaseTestCase):
                                               'ttl', 'ttl0', 'tos', 'tos0',
                                               'local', 'local0', 'proxy',
                                               'port', '1', '2'],
-                                             'sudo', None,
-                                             log_fail_as_error=True)
+                                             'sudo', None)
 
     def test_add_vxlan_invalid_port_length(self):
         wrapper = ip_lib.IPWrapper('sudo')
@@ -421,28 +406,6 @@ class TestIpWrapper(base.BaseTestCase):
         dev = mock.Mock()
         ip_lib.IPWrapper('sudo').add_device_to_namespace(dev)
         self.assertEqual(dev.mock_calls, [])
-
-
-class TestIpRule(base.BaseTestCase):
-    def setUp(self):
-        super(TestIpRule, self).setUp()
-        self.execute_p = mock.patch.object(ip_lib.IpRule, '_execute')
-        self.execute = self.execute_p.start()
-
-    def test_add_rule_from(self):
-        ip_lib.IpRule('sudo').add_rule_from('192.168.45.100', 2, 100)
-        self.execute.assert_called_once_with('', 'rule',
-                                             ('add', 'from', '192.168.45.100',
-                                              'lookup', 2, 'priority', 100),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
-
-    def test_delete_rule_priority(self):
-        ip_lib.IpRule('sudo').delete_rule_priority(100)
-        self.execute.assert_called_once_with('', 'rule',
-                                             ('del', 'priority', 100),
-                                             'sudo', None,
-                                             log_fail_as_error=True)
 
 
 class TestIPDevice(base.BaseTestCase):
@@ -695,20 +658,18 @@ class TestIpRouteCommand(TestIPCmdBase):
     def test_add_gateway(self):
         gateway = '192.168.45.100'
         metric = 100
-        table = 14
-        self.route_cmd.add_gateway(gateway, metric, table)
+        self.route_cmd.add_gateway(gateway, metric)
         self._assert_sudo([],
                           ('replace', 'default', 'via', gateway,
                            'metric', metric,
-                           'dev', self.parent.name, 'table', table))
+                           'dev', self.parent.name))
 
     def test_del_gateway(self):
         gateway = '192.168.45.100'
-        table = 14
-        self.route_cmd.delete_gateway(gateway, table)
+        self.route_cmd.delete_gateway(gateway)
         self._assert_sudo([],
                           ('del', 'default', 'via', gateway,
-                           'dev', self.parent.name, 'table', table))
+                           'dev', self.parent.name))
 
     def test_get_gateway(self):
         test_cases = [{'sample': GATEWAY_SAMPLE1,
@@ -759,24 +720,6 @@ class TestIpRouteCommand(TestIPCmdBase):
         # Check two calls - device get and subnet get
         self.assertEqual(len(self.parent._run.mock_calls), 2)
 
-    def test_add_route(self):
-        cidr = '192.168.45.100/24'
-        ip = '10.0.0.1'
-        table = 14
-        self.route_cmd.add_route(cidr, ip, table)
-        self._assert_sudo([],
-                          ('replace', cidr, 'via', ip,
-                           'dev', self.parent.name, 'table', table))
-
-    def test_delete_route(self):
-        cidr = '192.168.45.100/24'
-        ip = '10.0.0.1'
-        table = 14
-        self.route_cmd.delete_route(cidr, ip, table)
-        self._assert_sudo([],
-                          ('del', cidr, 'via', ip,
-                           'dev', self.parent.name, 'table', table))
-
 
 class TestIpNetnsCommand(TestIPCmdBase):
     def setUp(self):
@@ -785,14 +728,9 @@ class TestIpNetnsCommand(TestIPCmdBase):
         self.netns_cmd = ip_lib.IpNetnsCommand(self.parent)
 
     def test_add_namespace(self):
-        with mock.patch('neutron.agent.linux.utils.execute') as execute:
-            ns = self.netns_cmd.add('ns')
-            self._assert_sudo([], ('add', 'ns'), force_root_namespace=True)
-            self.assertEqual(ns.namespace, 'ns')
-            execute.assert_called_once_with(
-                ['ip', 'netns', 'exec', 'ns',
-                 'sysctl', '-w', 'net.ipv4.conf.all.promote_secondaries=1'],
-                root_helper='sudo', check_exit_code=True, extra_ok_codes=None)
+        ns = self.netns_cmd.add('ns')
+        self._assert_sudo([], ('add', 'ns'), force_root_namespace=True)
+        self.assertEqual(ns.namespace, 'ns')
 
     def test_delete_namespace(self):
         with mock.patch('neutron.agent.linux.utils.execute'):
@@ -808,8 +746,7 @@ class TestIpNetnsCommand(TestIPCmdBase):
             self.assertTrue(
                 netns_cmd.exists('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'))
             execute.assert_called_once_with(['ip', '-o', 'netns', 'list'],
-                                            root_helper=None,
-                                            log_fail_as_error=True)
+                                            root_helper=None)
 
     def test_namespace_doest_not_exist(self):
         retval = '\n'.join(NETNS_SAMPLE)
@@ -820,8 +757,7 @@ class TestIpNetnsCommand(TestIPCmdBase):
             self.assertFalse(
                 netns_cmd.exists('bbbbbbbb-1111-2222-3333-bbbbbbbbbbbb'))
             execute.assert_called_once_with(['ip', '-o', 'netns', 'list'],
-                                            root_helper=None,
-                                            log_fail_as_error=True)
+                                            root_helper=None)
 
     def test_execute(self):
         self.parent.namespace = 'ns'
@@ -830,8 +766,7 @@ class TestIpNetnsCommand(TestIPCmdBase):
             execute.assert_called_once_with(['ip', 'netns', 'exec', 'ns', 'ip',
                                              'link', 'list'],
                                             root_helper='sudo',
-                                            check_exit_code=True,
-                                            extra_ok_codes=None)
+                                            check_exit_code=True)
 
     def test_execute_env_var_prepend(self):
         self.parent.namespace = 'ns'
@@ -839,20 +774,9 @@ class TestIpNetnsCommand(TestIPCmdBase):
             env = dict(FOO=1, BAR=2)
             self.netns_cmd.execute(['ip', 'link', 'list'], env)
             execute.assert_called_once_with(
-                ['ip', 'netns', 'exec', 'ns', 'env'] +
-                ['%s=%s' % (k, v) for k, v in env.items()] +
-                ['ip', 'link', 'list'],
-                root_helper='sudo', check_exit_code=True, extra_ok_codes=None)
-
-    def test_execute_nosudo_with_no_namespace(self):
-        with mock.patch('neutron.agent.linux.utils.execute') as execute:
-            self.parent.namespace = None
-            self.parent.root_helper = None
-            self.netns_cmd.execute(['test'])
-            execute.assert_called_once_with(['test'],
-                                            root_helper=None,
-                                            check_exit_code=True,
-                                            extra_ok_codes=None)
+                ['ip', 'netns', 'exec', 'ns', 'env', 'FOO=1', 'BAR=2',
+                 'ip', 'link', 'list'],
+                root_helper='sudo', check_exit_code=True)
 
 
 class TestDeviceExists(base.BaseTestCase):
@@ -860,40 +784,10 @@ class TestDeviceExists(base.BaseTestCase):
         with mock.patch.object(ip_lib.IPDevice, '_execute') as _execute:
             _execute.return_value = LINK_SAMPLE[1]
             self.assertTrue(ip_lib.device_exists('eth0'))
-            _execute.assert_called_once_with('o', 'link', ('show', 'eth0'),
-                                             log_fail_as_error=False)
+            _execute.assert_called_once_with('o', 'link', ('show', 'eth0'))
 
     def test_device_does_not_exist(self):
         with mock.patch.object(ip_lib.IPDevice, '_execute') as _execute:
             _execute.return_value = ''
             _execute.side_effect = RuntimeError
             self.assertFalse(ip_lib.device_exists('eth0'))
-
-    def test_ensure_device_is_ready(self):
-        ip_lib_mock = mock.Mock()
-        with mock.patch.object(ip_lib, 'IPDevice', return_value=ip_lib_mock):
-            self.assertTrue(ip_lib.ensure_device_is_ready("eth0"))
-            self.assertTrue(ip_lib_mock.link.set_up.called)
-            ip_lib_mock.reset_mock()
-            # device doesn't exists
-            ip_lib_mock.link.set_up.side_effect = RuntimeError
-            self.assertFalse(ip_lib.ensure_device_is_ready("eth0"))
-
-
-class TestIpNeighCommand(TestIPCmdBase):
-    def setUp(self):
-        super(TestIpNeighCommand, self).setUp()
-        self.parent.name = 'tap0'
-        self.command = 'neigh'
-        self.neigh_cmd = ip_lib.IpNeighCommand(self.parent)
-
-    def test_add_entry(self):
-        self.neigh_cmd.add(4, '192.168.45.100', 'cc:dd:ee:ff:ab:cd')
-        self._assert_sudo([4], ('replace', '192.168.45.100', 'lladdr',
-                                'cc:dd:ee:ff:ab:cd', 'nud', 'permanent',
-                                'dev', 'tap0'))
-
-    def test_delete_entry(self):
-        self.neigh_cmd.delete(4, '192.168.45.100', 'cc:dd:ee:ff:ab:cd')
-        self._assert_sudo([4], ('del', '192.168.45.100', 'lladdr',
-                                'cc:dd:ee:ff:ab:cd', 'dev', 'tap0'))

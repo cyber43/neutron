@@ -96,6 +96,10 @@ class PolicyFileNotFound(NotFound):
     message = _("Policy configuration policy.json could not be found")
 
 
+class PolicyRuleNotFound(NotFound):
+    message = _("Requested rule:%(rule)s cannot be found")
+
+
 class PolicyInitError(NeutronException):
     message = _("Failed to init policy %(policy)s because %(reason)s")
 
@@ -177,11 +181,6 @@ class ResourceExhausted(ServiceUnavailable):
 class NoNetworkAvailable(ResourceExhausted):
     message = _("Unable to create the network. "
                 "No tenant network is available for allocation.")
-
-
-class NoNetworkFoundInMaximumAllowedAttempts(ServiceUnavailable):
-    message = _("Unable to create the network. "
-                "No available network found in maximum allowed attempts.")
 
 
 class SubnetMismatchForPort(BadRequest):
@@ -305,17 +304,6 @@ class NetworkVlanRangeError(NeutronException):
         super(NetworkVlanRangeError, self).__init__(**kwargs)
 
 
-class NetworkTunnelRangeError(NeutronException):
-    message = _("Invalid network Tunnel range: "
-                "'%(tunnel_range)s' - %(error)s")
-
-    def __init__(self, **kwargs):
-        # Convert tunnel_range tuple to 'start:end' format for display
-        if isinstance(kwargs['tunnel_range'], tuple):
-            kwargs['tunnel_range'] = "%d:%d" % kwargs['tunnel_range']
-        super(NetworkTunnelRangeError, self).__init__(**kwargs)
-
-
 class NetworkVxlanPortRangeError(NeutronException):
     message = _("Invalid network VXLAN port range: '%(vxlan_range)s'")
 
@@ -335,7 +323,3 @@ class DeviceIDNotOwnedByTenant(Conflict):
 
 class InvalidCIDR(BadRequest):
     message = _("Invalid CIDR %(input)s given as IP prefix")
-
-
-class RouterNotCompatibleWithAgent(NeutronException):
-    message = _("Router '%(router_id)s' is not compatible with this agent")

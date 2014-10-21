@@ -1,3 +1,5 @@
+# vim:  tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Embrane, Inc.
 # All Rights Reserved.
 #
@@ -12,23 +14,22 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author:  Ivar Lazzaro, Embrane, Inc. ivar@embrane.com
 
 import sys
 
 import mock
+sys.modules["heleosapi"] = mock.Mock()
 from oslo.config import cfg
-from oslo.db import exception as n_exc
 
 from neutron import context
-from neutron.tests.unit.db.loadbalancer import test_db_loadbalancer
-
-HELEOSAPIMOCK = mock.Mock()
-sys.modules["heleosapi"] = HELEOSAPIMOCK
+from neutron.openstack.common.db import exception as n_exc
 from neutron.services.loadbalancer.drivers.embrane import config  # noqa
 from neutron.services.loadbalancer.drivers.embrane import constants as h_con
 from neutron.services.loadbalancer.drivers.embrane import db as h_db
-# Stop the mock from persisting indefinitely in the global modules space
-del sys.modules["heleosapi"]
+from neutron.tests.unit.db.loadbalancer import test_db_loadbalancer
+
 
 EMBRANE_PROVIDER = ('LOADBALANCER:lbaas:neutron.services.'
                     'loadbalancer.drivers.embrane.driver.'
@@ -41,12 +42,10 @@ class TestLoadBalancerPluginBase(
     def setUp(self):
         cfg.CONF.set_override('admin_password', "admin123", 'heleoslb')
         cfg.CONF.set_override('sync_interval', 0, 'heleoslb')
-        mock.patch.dict(sys.modules, {'heleosapi': HELEOSAPIMOCK}).start()
+
         super(TestLoadBalancerPluginBase, self).setUp(
             lbaas_provider=EMBRANE_PROVIDER)
         self.driver = self.plugin.drivers['lbaas']
-        # prevent module mock from saving calls between tests
-        self.addCleanup(HELEOSAPIMOCK.reset_mock)
 
 
 class TestLoadBalancerPlugin(test_db_loadbalancer.TestLoadBalancer,
@@ -56,7 +55,7 @@ class TestLoadBalancerPlugin(test_db_loadbalancer.TestLoadBalancer,
         self.skip("App cookie persistence not supported.")
 
     def test_pool_port(self):
-        with self.port() as port:
+        with self.port(no_delete=True) as port:
             with self.pool() as pool:
                 h_db.add_pool_port(context.get_admin_context(),
                                    pool['pool']['id'], port['port']['id'])

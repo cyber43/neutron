@@ -12,6 +12,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author:  Ivar Lazzaro, Embrane, Inc. ivar@embrane.com
 
 from oslo.config import cfg
 
@@ -21,29 +23,29 @@ from oslo.config import cfg
 heleos_opts = [
     cfg.StrOpt('esm_mgmt',
                help=_('ESM management root address')),
-    cfg.StrOpt('admin_username',
+    cfg.StrOpt('admin_username', default=None,
                help=_('ESM admin username.')),
-    cfg.StrOpt('admin_password',
+    cfg.StrOpt('admin_password', default=None,
                secret=True,
                help=_('ESM admin password.')),
-    cfg.StrOpt('lb_image',
+    cfg.StrOpt('lb_image', default=None,
                help=_('Load Balancer image id (Embrane LB)')),
-    cfg.StrOpt('inband_id',
+    cfg.StrOpt('inband_id', default=None,
                help=_('In band Security Zone id for LBs')),
-    cfg.StrOpt('oob_id',
+    cfg.StrOpt('oob_id', default=None,
                help=_('Out of band Security Zone id for LBs')),
-    cfg.StrOpt('mgmt_id',
+    cfg.StrOpt('mgmt_id', default=None,
                help=_('Management Security Zone id for LBs')),
-    cfg.StrOpt('dummy_utif_id',
+    cfg.StrOpt('dummy_utif_id', default=None,
                help=_('Dummy user traffic Security Zone id for LBs')),
-    cfg.StrOpt('resource_pool_id',
+    cfg.StrOpt('resource_pool_id', default=None,
                help=_('Shared resource pool id')),
     cfg.StrOpt('lb_flavor', default="small",
                help=_('choose LB image flavor to use, accepted values: small, '
                       'medium')),
     cfg.IntOpt('sync_interval', default=60,
                help=_('resource synchronization interval in seconds')),
-    cfg.BoolOpt('async_requests',
+    cfg.BoolOpt('async_requests', default=None,
                 help=_('Define if the requests have '
                        'run asynchronously or not')),
 ]

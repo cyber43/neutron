@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
@@ -20,6 +22,7 @@ import re
 import shutil
 import socket
 import sys
+import uuid
 
 import netaddr
 from oslo.config import cfg
@@ -29,7 +32,6 @@ from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.common import constants
 from neutron.common import exceptions
-from neutron.common import utils as commonutils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log as logging
@@ -75,46 +77,17 @@ WIN2k3_STATIC_DNS = 249
 NS_PREFIX = 'qdhcp-'
 
 
-class DictModel(dict):
+class DictModel(object):
     """Convert dict into an object that provides attribute access to values."""
+    def __init__(self, d):
+        for key, value in d.iteritems():
+            if isinstance(value, list):
+                value = [DictModel(item) if isinstance(item, dict) else item
+                         for item in value]
+            elif isinstance(value, dict):
+                value = DictModel(value)
 
-    def __init__(self, *args, **kwargs):
-        """Convert dict values to DictModel values."""
-        super(DictModel, self).__init__(*args, **kwargs)
-
-        def needs_upgrade(item):
-            """Check if `item` is a dict and needs to be changed to DictModel.
-            """
-            return isinstance(item, dict) and not isinstance(item, DictModel)
-
-        def upgrade(item):
-            """Upgrade item if it needs to be upgraded."""
-            if needs_upgrade(item):
-                return DictModel(item)
-            else:
-                return item
-
-        for key, value in self.iteritems():
-            if isinstance(value, (list, tuple)):
-                # Keep the same type but convert dicts to DictModels
-                self[key] = type(value)(
-                    (upgrade(item) for item in value)
-                )
-            elif needs_upgrade(value):
-                # Change dict instance values to DictModel instance values
-                self[key] = DictModel(value)
-
-    def __getattr__(self, name):
-        try:
-            return self[name]
-        except KeyError as e:
-            raise AttributeError(e)
-
-    def __setattr__(self, name, value):
-        self[name] = value
-
-    def __delattr__(self, name):
-        del self[name]
+            setattr(self, key, value)
 
 
 class NetModel(DictModel):
@@ -167,23 +140,13 @@ class DhcpBase(object):
     def existing_dhcp_networks(cls, conf, root_helper):
         """Return a list of existing networks ids that we have configs for."""
 
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @classmethod
     def check_version(cls):
         """Execute version checks on DHCP server."""
 
-        raise NotImplementedError()
-
-    @classmethod
-    def get_isolated_subnets(cls, network):
-        """Returns a dict indicating whether or not a subnet is isolated"""
-        raise NotImplementedError()
-
-    @classmethod
-    def should_enable_metadata(cls, conf, network):
-        """True if the metadata-proxy should be enabled for the network."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class DhcpLocalProcess(DhcpBase):
@@ -198,10 +161,11 @@ class DhcpLocalProcess(DhcpBase):
 
     def enable(self):
         """Enables DHCP for this network by spawning a local process."""
+        interface_name = self.device_manager.setup(self.network,
+                                                   reuse_existing=True)
         if self.active:
             self.restart()
         elif self._enable_dhcp():
-            interface_name = self.device_manager.setup(self.network)
             self.interface_name = interface_name
             self.spawn_process()
 
@@ -209,17 +173,15 @@ class DhcpLocalProcess(DhcpBase):
         """Disable DHCP for this network by killing the local process."""
         pid = self.pid
 
-        if pid:
-            if self.active:
-                cmd = ['kill', '-9', pid]
-                utils.execute(cmd, self.root_helper)
-            else:
-                LOG.debug(_('DHCP for %(net_id)s is stale, pid %(pid)d '
-                            'does not exist, performing cleanup'),
-                          {'net_id': self.network.id, 'pid': pid})
+        if self.active:
+            cmd = ['kill', '-9', pid]
+            utils.execute(cmd, self.root_helper)
             if not retain_port:
-                self.device_manager.destroy(self.network,
-                                            self.interface_name)
+                self.device_manager.destroy(self.network, self.interface_name)
+
+        elif pid:
+            LOG.debug(_('DHCP for %(net_id)s pid %(pid)d is stale, ignoring '
+                        'command'), {'net_id': self.network.id, 'pid': pid})
         else:
             LOG.debug(_('No DHCP started for %s'), self.network.id)
 
@@ -312,7 +274,7 @@ class Dnsmasq(DhcpLocalProcess):
 
     NEUTRON_NETWORK_ID_KEY = 'NEUTRON_NETWORK_ID'
     NEUTRON_RELAY_SOCKET_PATH_KEY = 'NEUTRON_RELAY_SOCKET_PATH'
-    MINIMUM_VERSION = 2.63
+    MINIMUM_VERSION = 2.59
 
     @classmethod
     def check_version(cls):
@@ -323,16 +285,14 @@ class Dnsmasq(DhcpLocalProcess):
             ver = re.findall("\d+.\d+", out)[0]
             is_valid_version = float(ver) >= cls.MINIMUM_VERSION
             if not is_valid_version:
-                LOG.error(_('FAILED VERSION REQUIREMENT FOR DNSMASQ. '
-                            'DHCP AGENT MAY NOT RUN CORRECTLY! '
-                            'Please ensure that its version is %s '
-                            'or above!'), cls.MINIMUM_VERSION)
-                raise SystemExit(1)
+                LOG.warning(_('FAILED VERSION REQUIREMENT FOR DNSMASQ. '
+                              'DHCP AGENT MAY NOT RUN CORRECTLY! '
+                              'Please ensure that its version is %s '
+                              'or above!'), cls.MINIMUM_VERSION)
         except (OSError, RuntimeError, IndexError, ValueError):
-            LOG.error(_('Unable to determine dnsmasq version. '
-                        'Please ensure that its version is %s '
-                        'or above!'), cls.MINIMUM_VERSION)
-            raise SystemExit(1)
+            LOG.warning(_('Unable to determine dnsmasq version. '
+                          'Please ensure that its version is %s '
+                          'or above!'), cls.MINIMUM_VERSION)
         return float(ver)
 
     @classmethod
@@ -370,35 +330,28 @@ class Dnsmasq(DhcpLocalProcess):
 
         possible_leases = 0
         for i, subnet in enumerate(self.network.subnets):
-            mode = None
             # if a subnet is specified to have dhcp disabled
             if not subnet.enable_dhcp:
                 continue
             if subnet.ip_version == 4:
                 mode = 'static'
             else:
-                # Note(scollins) If the IPv6 attributes are not set, set it as
-                # static to preserve previous behavior
-                addr_mode = getattr(subnet, 'ipv6_address_mode', None)
-                ra_mode = getattr(subnet, 'ipv6_ra_mode', None)
-                if (addr_mode in [constants.DHCPV6_STATEFUL,
-                                  constants.DHCPV6_STATELESS] or
-                        not addr_mode and not ra_mode):
-                    mode = 'static'
+                # TODO(mark): how do we indicate other options
+                # ra-only, slaac, ra-nameservers, and ra-stateless.
+                mode = 'static'
+            if self.version >= self.MINIMUM_VERSION:
+                set_tag = 'set:'
+            else:
+                set_tag = ''
 
             cidr = netaddr.IPNetwork(subnet.cidr)
 
-            if self.conf.dhcp_lease_duration == -1:
-                lease = 'infinite'
-            else:
-                lease = '%ss' % self.conf.dhcp_lease_duration
-
-            # mode is optional and is not set - skip it
-            if mode:
-                cmd.append('--dhcp-range=%s%s,%s,%s,%s' %
-                           ('set:', self._TAG_PREFIX % i,
-                            cidr.network, mode, lease))
-                possible_leases += cidr.size
+            cmd.append('--dhcp-range=%s%s,%s,%s,%ss' %
+                       (set_tag, self._TAG_PREFIX % i,
+                        cidr.network,
+                        mode,
+                        self.conf.dhcp_lease_duration))
+            possible_leases += cidr.size
 
         # Cap the limit because creating lots of subnets can inflate
         # this possible lease cap.
@@ -455,25 +408,14 @@ class Dnsmasq(DhcpLocalProcess):
             port,  # a DictModel instance representing the port.
             alloc,  # a DictModel instance of the allocated ip and subnet.
             host_name,  # Host name.
-            name,  # Canonical hostname in the format 'hostname[.domain]'.
+            name,  # Host name and domain name in the format 'hostname.domain'.
         )
         """
-        v6_nets = dict((subnet.id, subnet) for subnet in
-                       self.network.subnets if subnet.ip_version == 6)
         for port in self.network.ports:
             for alloc in port.fixed_ips:
-                # Note(scollins) Only create entries that are
-                # associated with the subnet being managed by this
-                # dhcp agent
-                if alloc.subnet_id in v6_nets:
-                    addr_mode = v6_nets[alloc.subnet_id].ipv6_address_mode
-                    if addr_mode != constants.DHCPV6_STATEFUL:
-                        continue
                 hostname = 'host-%s' % alloc.ip_address.replace(
                     '.', '-').replace(':', '-')
-                fqdn = hostname
-                if self.conf.dhcp_domain:
-                    fqdn = '%s.%s' % (fqdn, self.conf.dhcp_domain)
+                fqdn = '%s.%s' % (hostname, self.conf.dhcp_domain)
                 yield (port, alloc, hostname, fqdn)
 
     def _output_hosts_file(self):
@@ -497,6 +439,7 @@ class Dnsmasq(DhcpLocalProcess):
 
         LOG.debug(_('Building host file: %s'), filename)
         for (port, alloc, hostname, name) in self._iter_hosts():
+            set_tag = ''
             # (dzyu) Check if it is legal ipv6 address, if so, need wrap
             # it with '[]' to let dnsmasq to distinguish MAC address from
             # IPv6 address.
@@ -509,9 +452,12 @@ class Dnsmasq(DhcpLocalProcess):
                        "ip": ip_address})
 
             if getattr(port, 'extra_dhcp_opts', False):
+                if self.version >= self.MINIMUM_VERSION:
+                    set_tag = 'set:'
+
                 buf.write('%s,%s,%s,%s%s\n' %
                           (port.mac_address, name, ip_address,
-                           'set:', port.id))
+                           set_tag, port.id))
             else:
                 buf.write('%s,%s,%s\n' %
                           (port.mac_address, name, ip_address))
@@ -568,86 +514,55 @@ class Dnsmasq(DhcpLocalProcess):
 
         options = []
 
-        isolated_subnets = self.get_isolated_subnets(self.network)
         dhcp_ips = collections.defaultdict(list)
         subnet_idx_map = {}
         for i, subnet in enumerate(self.network.subnets):
-            if (not subnet.enable_dhcp or
-                (subnet.ip_version == 6 and
-                 getattr(subnet, 'ipv6_address_mode', None)
-                 in [None, constants.IPV6_SLAAC])):
+            if not subnet.enable_dhcp:
                 continue
             if subnet.dns_nameservers:
                 options.append(
-                    self._format_option(
-                        subnet.ip_version, i, 'dns-server',
-                        ','.join(
-                            Dnsmasq._convert_to_literal_addrs(
-                                subnet.ip_version, subnet.dns_nameservers))))
+                    self._format_option(i, 'dns-server',
+                                        ','.join(subnet.dns_nameservers)))
             else:
                 # use the dnsmasq ip as nameservers only if there is no
                 # dns-server submitted by the server
                 subnet_idx_map[subnet.id] = i
 
-            if self.conf.dhcp_domain and subnet.ip_version == 6:
-                options.append('tag:tag%s,option6:domain-search,%s' %
-                               (i, ''.join(self.conf.dhcp_domain)))
-
             gateway = subnet.gateway_ip
             host_routes = []
             for hr in subnet.host_routes:
                 if hr.destination == "0.0.0.0/0":
-                    if not gateway:
-                        gateway = hr.nexthop
+                    gateway = hr.nexthop
                 else:
                     host_routes.append("%s,%s" % (hr.destination, hr.nexthop))
 
             # Add host routes for isolated network segments
 
-            if (isolated_subnets[subnet.id] and
-                    self.conf.enable_isolated_metadata and
-                    subnet.ip_version == 4):
+            if self._enable_metadata(subnet):
                 subnet_dhcp_ip = subnet_to_interface_ip[subnet.id]
                 host_routes.append(
                     '%s/32,%s' % (METADATA_DEFAULT_IP, subnet_dhcp_ip)
                 )
 
-            if subnet.ip_version == 4:
-                if host_routes:
-                    if gateway:
-                        host_routes.append("%s,%s" % ("0.0.0.0/0", gateway))
-                    options.append(
-                        self._format_option(subnet.ip_version, i,
-                                            'classless-static-route',
-                                            ','.join(host_routes)))
-                    options.append(
-                        self._format_option(subnet.ip_version, i,
-                                            WIN2k3_STATIC_DNS,
-                                            ','.join(host_routes)))
+            if host_routes:
+                options.append(
+                    self._format_option(i, 'classless-static-route',
+                                        ','.join(host_routes)))
+                options.append(
+                    self._format_option(i, WIN2k3_STATIC_DNS,
+                                        ','.join(host_routes)))
 
+            if subnet.ip_version == 4:
                 if gateway:
-                    options.append(self._format_option(subnet.ip_version,
-                                                       i, 'router',
-                                                       gateway))
+                    options.append(self._format_option(i, 'router', gateway))
                 else:
-                    options.append(self._format_option(subnet.ip_version,
-                                                       i, 'router'))
+                    options.append(self._format_option(i, 'router'))
 
         for port in self.network.ports:
             if getattr(port, 'extra_dhcp_opts', False):
-                for ip_version in (4, 6):
-                    if any(
-                        netaddr.IPAddress(ip.ip_address).version == ip_version
-                            for ip in port.fixed_ips):
-                        options.extend(
-                            # TODO(xuhanp):Instead of applying extra_dhcp_opts
-                            # to both DHCPv4 and DHCPv6, we need to find a new
-                            # way to specify options for v4 and v6
-                            # respectively. We also need to validate the option
-                            # before applying it.
-                            self._format_option(ip_version, port.id,
-                                                opt.opt_name, opt.opt_value)
-                            for opt in port.extra_dhcp_opts)
+                options.extend(
+                    self._format_option(port.id, opt.opt_name, opt.opt_value)
+                    for opt in port.extra_dhcp_opts)
 
             # provides all dnsmasq ip as dns-server if there is more than
             # one dnsmasq for a subnet and there is no dns-server submitted
@@ -660,16 +575,10 @@ class Dnsmasq(DhcpLocalProcess):
                     dhcp_ips[i].append(ip.ip_address)
 
         for i, ips in dhcp_ips.items():
-            for ip_version in (4, 6):
-                vx_ips = [ip for ip in ips
-                          if netaddr.IPAddress(ip).version == ip_version]
-                if vx_ips:
-                    options.append(
-                        self._format_option(
-                            ip_version, i, 'dns-server',
-                            ','.join(
-                                Dnsmasq._convert_to_literal_addrs(ip_version,
-                                                                  vx_ips))))
+            if len(ips) > 1:
+                options.append(self._format_option(i,
+                                                   'dns-server',
+                                                   ','.join(ips)))
 
         name = self.get_conf_file_name('opts')
         utils.replace_file(name, '\n'.join(options))
@@ -697,57 +606,41 @@ class Dnsmasq(DhcpLocalProcess):
 
         return retval
 
-    def _format_option(self, ip_version, tag, option, *args):
+    def _format_option(self, tag, option, *args):
         """Format DHCP option by option name or code."""
+        if self.version >= self.MINIMUM_VERSION:
+            set_tag = 'tag:'
+        else:
+            set_tag = ''
+
         option = str(option)
 
         if isinstance(tag, int):
             tag = self._TAG_PREFIX % tag
 
         if not option.isdigit():
-            if ip_version == 4:
-                option = 'option:%s' % option
+            option = 'option:%s' % option
+
+        return ','.join((set_tag + tag, '%s' % option) + args)
+
+    def _enable_metadata(self, subnet):
+        '''Determine if the metadata route will be pushed to hosts on subnet.
+
+        If subnet has a Neutron router attached, we want the hosts to get
+        metadata from the router's proxy via their default route instead.
+        '''
+        if self.conf.enable_isolated_metadata and subnet.ip_version == 4:
+            if subnet.gateway_ip is None:
+                return True
             else:
-                option = 'option6:%s' % option
-
-        return ','.join(('tag:' + tag, '%s' % option) + args)
-
-    @staticmethod
-    def _convert_to_literal_addrs(ip_version, ips):
-        if ip_version == 4:
-            return ips
-        return ['[' + ip + ']' for ip in ips]
-
-    @classmethod
-    def get_isolated_subnets(cls, network):
-        """Returns a dict indicating whether or not a subnet is isolated
-
-        A subnet is considered non-isolated if there is a port connected to
-        the subnet, and the port's ip address matches that of the subnet's
-        gateway. The port must be owned by a nuetron router.
-        """
-        isolated_subnets = collections.defaultdict(lambda: True)
-        subnets = dict((subnet.id, subnet) for subnet in network.subnets)
-
-        for port in network.ports:
-            if port.device_owner not in (constants.DEVICE_OWNER_ROUTER_INTF,
-                                         constants.DEVICE_OWNER_DVR_INTERFACE):
-                continue
-            for alloc in port.fixed_ips:
-                if subnets[alloc.subnet_id].gateway_ip == alloc.ip_address:
-                    isolated_subnets[alloc.subnet_id] = False
-
-        return isolated_subnets
-
-    @classmethod
-    def should_enable_metadata(cls, conf, network):
-        """True if there exists a subnet for which a metadata proxy is needed
-        """
-        if not conf.use_namespaces or not conf.enable_isolated_metadata:
+                for port in self.network.ports:
+                    if port.device_owner == constants.DEVICE_OWNER_ROUTER_INTF:
+                        for alloc in port.fixed_ips:
+                            if alloc.subnet_id == subnet.id:
+                                return False
+                return True
+        else:
             return False
-
-        isolated_subnets = cls.get_isolated_subnets(network)
-        return any(isolated_subnets[subnet.id] for subnet in network.subnets)
 
     @classmethod
     def lease_update(cls):
@@ -785,7 +678,7 @@ class DeviceManager(object):
         if not conf.interface_driver:
             msg = _('An interface driver must be specified')
             LOG.error(msg)
-            raise SystemExit(1)
+            raise SystemExit(msg)
         try:
             self.driver = importutils.import_object(
                 conf.interface_driver, conf)
@@ -794,7 +687,7 @@ class DeviceManager(object):
                    "%(inner)s") % {'driver': conf.interface_driver,
                                    'inner': e})
             LOG.error(msg)
-            raise SystemExit(1)
+            raise SystemExit(msg)
 
     def get_interface_name(self, network, port):
         """Return interface(device) name for use by the DHCP process."""
@@ -804,7 +697,9 @@ class DeviceManager(object):
         """Return a unique DHCP device ID for this host on the network."""
         # There could be more than one dhcp server per network, so create
         # a device id that combines host and network ids
-        return commonutils.get_dhcp_agent_device_id(network.id, self.conf.host)
+
+        host_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname())
+        return 'dhcp%s-%s' % (host_uuid, network.id)
 
     def _set_default_route(self, network, device_name):
         """Sets the default gateway for this dhcp namespace.
@@ -873,28 +768,13 @@ class DeviceManager(object):
                     port_fixed_ips.extend(
                         [dict(subnet_id=s) for s in dhcp_enabled_subnet_ids])
                     dhcp_port = self.plugin.update_dhcp_port(
-                        port.id, {'port': {'network_id': network.id,
-                                           'fixed_ips': port_fixed_ips}})
+                        port.id, {'port': {'fixed_ips': port_fixed_ips}})
                     if not dhcp_port:
                         raise exceptions.Conflict()
                 else:
                     dhcp_port = port
                 # break since we found port that matches device_id
                 break
-
-        # check for a reserved DHCP port
-        if dhcp_port is None:
-            LOG.debug(_('DHCP port %(device_id)s on network %(network_id)s'
-                        ' does not yet exist. Checking for a reserved port.'),
-                      {'device_id': device_id, 'network_id': network.id})
-            for port in network.ports:
-                port_device_id = getattr(port, 'device_id', None)
-                if port_device_id == constants.DEVICE_ID_RESERVED_DHCP_PORT:
-                    dhcp_port = self.plugin.update_dhcp_port(
-                        port.id, {'port': {'network_id': network.id,
-                                           'device_id': device_id}})
-                    if dhcp_port:
-                        break
 
         # DHCP port has not yet been created.
         if dhcp_port is None:
@@ -925,14 +805,18 @@ class DeviceManager(object):
 
         return dhcp_port
 
-    def setup(self, network):
+    def setup(self, network, reuse_existing=False):
         """Create and initialize a device for network's DHCP on this host."""
         port = self.setup_dhcp_port(network)
         interface_name = self.get_interface_name(network, port)
 
-        if ip_lib.ensure_device_is_ready(interface_name,
-                                         self.root_helper,
-                                         network.namespace):
+        if ip_lib.device_exists(interface_name,
+                                self.root_helper,
+                                network.namespace):
+            if not reuse_existing:
+                raise exceptions.PreexistingDeviceFailure(
+                    dev_name=interface_name)
+
             LOG.debug(_('Reusing existing device: %s.'), interface_name)
         else:
             self.driver.plug(network.id,

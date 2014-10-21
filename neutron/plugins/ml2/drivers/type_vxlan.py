@@ -12,19 +12,18 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Kyle Mestery, Cisco Systems, Inc.
 
 from oslo.config import cfg
-from oslo.db import exception as db_exc
-from six import moves
 import sqlalchemy as sa
-from sqlalchemy import sql
+from sqlalchemy.orm import exc as sa_exc
 
 from neutron.common import exceptions as exc
 from neutron.db import api as db_api
 from neutron.db import model_base
-from neutron.openstack.common.gettextutils import _LE
 from neutron.openstack.common import log
 from neutron.plugins.common import constants as p_const
+from neutron.plugins.ml2 import driver_api as api
 from neutron.plugins.ml2.drivers import type_tunnel
 
 LOG = log.getLogger(__name__)
@@ -38,7 +37,7 @@ vxlan_opts = [
                 help=_("Comma-separated list of <vni_min>:<vni_max> tuples "
                        "enumerating ranges of VXLAN VNI IDs that are "
                        "available for tenant network allocation")),
-    cfg.StrOpt('vxlan_group',
+    cfg.StrOpt('vxlan_group', default=None,
                help=_("Multicast group for VXLAN. If unset, disables VXLAN "
                       "multicast mode.")),
 ]
@@ -52,8 +51,7 @@ class VxlanAllocation(model_base.BASEV2):
 
     vxlan_vni = sa.Column(sa.Integer, nullable=False, primary_key=True,
                           autoincrement=False)
-    allocated = sa.Column(sa.Boolean, nullable=False, default=False,
-                          server_default=sql.false())
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False)
 
 
 class VxlanEndpoints(model_base.BASEV2):
@@ -61,7 +59,8 @@ class VxlanEndpoints(model_base.BASEV2):
     __tablename__ = 'ml2_vxlan_endpoints'
 
     ip_address = sa.Column(sa.String(64), primary_key=True)
-    udp_port = sa.Column(sa.Integer, nullable=False)
+    udp_port = sa.Column(sa.Integer, primary_key=True, nullable=False,
+                         autoincrement=False)
 
     def __repr__(self):
         return "<VxlanTunnelEndpoint(%s)>" % self.ip_address
@@ -69,62 +68,113 @@ class VxlanEndpoints(model_base.BASEV2):
 
 class VxlanTypeDriver(type_tunnel.TunnelTypeDriver):
 
-    def __init__(self):
-        super(VxlanTypeDriver, self).__init__(VxlanAllocation)
-
     def get_type(self):
         return p_const.TYPE_VXLAN
 
     def initialize(self):
-        try:
-            self._initialize(cfg.CONF.ml2_type_vxlan.vni_ranges)
-        except exc.NetworkTunnelRangeError:
-            LOG.exception(_("Failed to parse vni_ranges. "
-                            "Service terminated!"))
-            raise SystemExit()
+        self.vxlan_vni_ranges = []
+        self._parse_tunnel_ranges(
+            cfg.CONF.ml2_type_vxlan.vni_ranges,
+            self.vxlan_vni_ranges,
+            p_const.TYPE_VXLAN
+        )
+        self._sync_vxlan_allocations()
 
-    def sync_allocations(self):
+    def reserve_provider_segment(self, session, segment):
+        segmentation_id = segment.get(api.SEGMENTATION_ID)
+        with session.begin(subtransactions=True):
+            try:
+                alloc = (session.query(VxlanAllocation).
+                         filter_by(vxlan_vni=segmentation_id).
+                         with_lockmode('update').
+                         one())
+                if alloc.allocated:
+                    raise exc.TunnelIdInUse(tunnel_id=segmentation_id)
+                LOG.debug(_("Reserving specific vxlan tunnel %s from pool"),
+                          segmentation_id)
+                alloc.allocated = True
+            except sa_exc.NoResultFound:
+                LOG.debug(_("Reserving specific vxlan tunnel %s outside pool"),
+                          segmentation_id)
+                alloc = VxlanAllocation(vxlan_vni=segmentation_id)
+                alloc.allocated = True
+                session.add(alloc)
+
+    def allocate_tenant_segment(self, session):
+        with session.begin(subtransactions=True):
+            alloc = (session.query(VxlanAllocation).
+                     filter_by(allocated=False).
+                     with_lockmode('update').
+                     first())
+            if alloc:
+                LOG.debug(_("Allocating vxlan tunnel vni %(vxlan_vni)s"),
+                          {'vxlan_vni': alloc.vxlan_vni})
+                alloc.allocated = True
+                return {api.NETWORK_TYPE: p_const.TYPE_VXLAN,
+                        api.PHYSICAL_NETWORK: None,
+                        api.SEGMENTATION_ID: alloc.vxlan_vni}
+
+    def release_segment(self, session, segment):
+        vxlan_vni = segment[api.SEGMENTATION_ID]
+        with session.begin(subtransactions=True):
+            try:
+                alloc = (session.query(VxlanAllocation).
+                         filter_by(vxlan_vni=vxlan_vni).
+                         with_lockmode('update').
+                         one())
+                alloc.allocated = False
+                for low, high in self.vxlan_vni_ranges:
+                    if low <= vxlan_vni <= high:
+                        LOG.debug(_("Releasing vxlan tunnel %s to pool"),
+                                  vxlan_vni)
+                        break
+                else:
+                    session.delete(alloc)
+                    LOG.debug(_("Releasing vxlan tunnel %s outside pool"),
+                              vxlan_vni)
+            except sa_exc.NoResultFound:
+                LOG.warning(_("vxlan_vni %s not found"), vxlan_vni)
+
+    def _sync_vxlan_allocations(self):
+        """
+        Synchronize vxlan_allocations table with configured tunnel ranges.
+        """
 
         # determine current configured allocatable vnis
         vxlan_vnis = set()
-        for tun_min, tun_max in self.tunnel_ranges:
+        for tun_min, tun_max in self.vxlan_vni_ranges:
             if tun_max + 1 - tun_min > MAX_VXLAN_VNI:
-                LOG.error(_LE("Skipping unreasonable VXLAN VNI range "
-                              "%(tun_min)s:%(tun_max)s"),
+                LOG.error(_("Skipping unreasonable VXLAN VNI range "
+                            "%(tun_min)s:%(tun_max)s"),
                           {'tun_min': tun_min, 'tun_max': tun_max})
             else:
-                vxlan_vnis |= set(moves.xrange(tun_min, tun_max + 1))
+                vxlan_vnis |= set(xrange(tun_min, tun_max + 1))
 
         session = db_api.get_session()
         with session.begin(subtransactions=True):
             # remove from table unallocated tunnels not currently allocatable
-            # fetch results as list via all() because we'll be iterating
-            # through them twice
-            allocs = (session.query(VxlanAllocation).
-                      with_lockmode("update").all())
-            # collect all vnis present in db
-            existing_vnis = set(alloc.vxlan_vni for alloc in allocs)
-            # collect those vnis that needs to be deleted from db
-            vnis_to_remove = [alloc.vxlan_vni for alloc in allocs
-                              if (alloc.vxlan_vni not in vxlan_vnis and
-                                  not alloc.allocated)]
-            # Immediately delete vnis in chunks. This leaves no work for
-            # flush at the end of transaction
-            bulk_size = 100
-            chunked_vnis = (vnis_to_remove[i:i + bulk_size] for i in
-                            range(0, len(vnis_to_remove), bulk_size))
-            for vni_list in chunked_vnis:
-                session.query(VxlanAllocation).filter(
-                    VxlanAllocation.vxlan_vni.in_(vni_list)).delete(
-                        synchronize_session=False)
-            # collect vnis that need to be added
-            vnis = list(vxlan_vnis - existing_vnis)
-            chunked_vnis = (vnis[i:i + bulk_size] for i in
-                            range(0, len(vnis), bulk_size))
-            for vni_list in chunked_vnis:
-                bulk = [{'vxlan_vni': vni, 'allocated': False}
-                        for vni in vni_list]
-                session.execute(VxlanAllocation.__table__.insert(), bulk)
+            allocs = session.query(VxlanAllocation)
+            for alloc in allocs:
+                try:
+                    # see if tunnel is allocatable
+                    vxlan_vnis.remove(alloc.vxlan_vni)
+                except KeyError:
+                    # it's not allocatable, so check if its allocated
+                    if not alloc.allocated:
+                        # it's not, so remove it from table
+                        LOG.debug(_("Removing tunnel %s from pool"),
+                                  alloc.vxlan_vni)
+                        session.delete(alloc)
+
+            # add missing allocatable tunnels to table
+            for vxlan_vni in sorted(vxlan_vnis):
+                alloc = VxlanAllocation(vxlan_vni=vxlan_vni)
+                session.add(alloc)
+
+    def get_vxlan_allocation(self, session, vxlan_vni):
+        with session.begin(subtransactions=True):
+            return session.query(VxlanAllocation).filter_by(
+                vxlan_vni=vxlan_vni).first()
 
     def get_endpoints(self):
         """Get every vxlan endpoints from database."""
@@ -141,12 +191,13 @@ class VxlanTypeDriver(type_tunnel.TunnelTypeDriver):
     def add_endpoint(self, ip, udp_port=VXLAN_UDP_PORT):
         LOG.debug(_("add_vxlan_endpoint() called for ip %s"), ip)
         session = db_api.get_session()
-        try:
-            vxlan_endpoint = VxlanEndpoints(ip_address=ip,
-                                            udp_port=udp_port)
-            vxlan_endpoint.save(session)
-        except db_exc.DBDuplicateEntry:
-            vxlan_endpoint = (session.query(VxlanEndpoints).
-                              filter_by(ip_address=ip).one())
-            LOG.warning(_("Vxlan endpoint with ip %s already exists"), ip)
-        return vxlan_endpoint
+        with session.begin(subtransactions=True):
+            try:
+                vxlan_endpoint = (session.query(VxlanEndpoints).
+                                  filter_by(ip_address=ip).
+                                  with_lockmode('update').one())
+            except sa_exc.NoResultFound:
+                vxlan_endpoint = VxlanEndpoints(ip_address=ip,
+                                                udp_port=udp_port)
+                session.add(vxlan_endpoint)
+            return vxlan_endpoint

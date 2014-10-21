@@ -13,24 +13,25 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import eventlet
 import inspect
 import logging as std_logging
 import os
 import random
 
 from oslo.config import cfg
-from oslo.messaging import server as rpc_server
 
 from neutron.common import config
-from neutron.common import rpc as n_rpc
+from neutron.common import legacy
 from neutron import context
-from neutron.db import api as session
 from neutron import manager
+from neutron.openstack.common.db.sqlalchemy import session
 from neutron.openstack.common import excutils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import loopingcall
-from neutron.openstack.common import service as common_service
+from neutron.openstack.common.rpc import service
+from neutron.openstack.common.service import ProcessLauncher
 from neutron import wsgi
 
 
@@ -40,7 +41,7 @@ service_opts = [
                help=_('Seconds between running periodic tasks')),
     cfg.IntOpt('api_workers',
                default=0,
-               help=_('Number of separate API worker processes for service')),
+               help=_('Number of separate worker processes for service')),
     cfg.IntOpt('rpc_workers',
                default=0,
                help=_('Number of RPC worker processes for service')),
@@ -88,7 +89,8 @@ class NeutronApiService(WsgiService):
         # flags. Everything else must be set up in the conf file...
         # Log the options used when starting if we're in debug mode...
 
-        config.setup_logging()
+        config.setup_logging(cfg.CONF)
+        legacy.modernize_quantum_config(cfg.CONF)
         # Dump the initial option values
         cfg.CONF.log_opt_values(LOG, std_logging.DEBUG)
         service = cls(app_name)
@@ -98,8 +100,13 @@ class NeutronApiService(WsgiService):
 def serve_wsgi(cls):
 
     try:
-        service = cls.create()
-        service.start()
+        try:
+            service = cls.create()
+            service.start()
+        except RuntimeError:
+            LOG.exception(_('Error occurred: trying old api-paste.ini.'))
+            service = cls.create('quantum')
+            service.start()
     except Exception:
         with excutils.save_and_reraise_exception():
             LOG.exception(_('Unrecoverable error: please check log '
@@ -112,41 +119,39 @@ class RpcWorker(object):
     """Wraps a worker to be handled by ProcessLauncher"""
     def __init__(self, plugin):
         self._plugin = plugin
-        self._servers = []
+        self._server = None
 
     def start(self):
         # We may have just forked from parent process.  A quick disposal of the
         # existing sql connections avoids producing errors later when they are
         # discovered to be broken.
-        session.get_engine().pool.dispose()
-        self._servers = self._plugin.start_rpc_listeners()
+        session.get_engine(sqlite_fk=True).pool.dispose()
+        self._server = self._plugin.start_rpc_listener()
 
     def wait(self):
-        for server in self._servers:
-            if isinstance(server, rpc_server.MessageHandlingServer):
-                server.wait()
+        if isinstance(self._server, eventlet.greenthread.GreenThread):
+            self._server.wait()
 
     def stop(self):
-        for server in self._servers:
-            if isinstance(server, rpc_server.MessageHandlingServer):
-                server.kill()
-            self._servers = []
+        if isinstance(self._server, eventlet.greenthread.GreenThread):
+            self._server.kill()
+            self._server = None
 
 
 def serve_rpc():
     plugin = manager.NeutronManager.get_plugin()
 
-    # If 0 < rpc_workers then start_rpc_listeners would be called in a
+    # If 0 < rpc_workers then start_rpc_listener would be called in a
     # subprocess and we cannot simply catch the NotImplementedError.  It is
     # simpler to check this up front by testing whether the plugin supports
     # multiple RPC workers.
     if not plugin.rpc_workers_supported():
-        LOG.debug(_("Active plugin doesn't implement start_rpc_listeners"))
+        LOG.debug(_("Active plugin doesn't implement start_rpc_listener"))
         if 0 < cfg.CONF.rpc_workers:
-            msg = _("'rpc_workers = %d' ignored because start_rpc_listeners "
+            msg = _("'rpc_workers = %d' ignored because start_rpc_listener "
                     "is not implemented.")
             LOG.error(msg, cfg.CONF.rpc_workers)
-        raise NotImplementedError()
+        raise NotImplementedError
 
     try:
         rpc = RpcWorker(plugin)
@@ -155,7 +160,7 @@ def serve_rpc():
             rpc.start()
             return rpc
         else:
-            launcher = common_service.ProcessLauncher(wait_interval=1.0)
+            launcher = ProcessLauncher(wait_interval=1.0)
             launcher.launch_service(rpc, workers=cfg.CONF.rpc_workers)
             return launcher
     except Exception:
@@ -180,7 +185,7 @@ def _run_wsgi(app_name):
     return server
 
 
-class Service(n_rpc.Service):
+class Service(service.Service):
     """Service object for binaries running on hosts.
 
     A service takes a manager and enables rpc by listening to queues based

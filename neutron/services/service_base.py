@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -70,7 +72,7 @@ def load_drivers(service_type, plugin):
         msg = (_("No providers specified for '%s' service, exiting") %
                service_type)
         LOG.error(msg)
-        raise SystemExit(1)
+        raise SystemExit(msg)
 
     drivers = {}
     for provider in providers:

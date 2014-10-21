@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -13,10 +15,12 @@
 # under the License.
 
 import contextlib
+import logging
 
 import webob.exc
 
-from neutron.api import extensions
+from neutron.api.extensions import ExtensionMiddleware
+from neutron.api.extensions import PluginAwareExtensionManager
 from neutron.common import config
 from neutron import context
 import neutron.extensions
@@ -24,6 +28,8 @@ from neutron.extensions import metering
 from neutron.plugins.common import constants
 from neutron.services.metering import metering_plugin
 from neutron.tests.unit import test_db_plugin
+
+LOG = logging.getLogger(__name__)
 
 DB_METERING_PLUGIN_KLASS = (
     "neutron.services.metering."
@@ -37,8 +43,7 @@ class MeteringPluginDbTestCaseMixin(object):
     def _create_metering_label(self, fmt, name, description, **kwargs):
         data = {'metering_label': {'name': name,
                                    'tenant_id': kwargs.get('tenant_id',
-                                                           'test-tenant'),
-                                   'shared': kwargs.get('shared', False),
+                                                           'test_tenant'),
                                    'description': description}}
         req = self.new_create_request('metering-labels', data,
                                       fmt)
@@ -61,7 +66,7 @@ class MeteringPluginDbTestCaseMixin(object):
                                     remote_ip_prefix, excluded, **kwargs):
         data = {'metering_label_rule':
                 {'metering_label_id': metering_label_id,
-                 'tenant_id': kwargs.get('tenant_id', 'test-tenant'),
+                 'tenant_id': kwargs.get('tenant_id', 'test_tenant'),
                  'direction': direction,
                  'excluded': excluded,
                  'remote_ip_prefix': remote_ip_prefix}}
@@ -86,20 +91,20 @@ class MeteringPluginDbTestCaseMixin(object):
 
     @contextlib.contextmanager
     def metering_label(self, name='label', description='desc',
-                       fmt=None, do_delete=True, **kwargs):
+                       fmt=None, no_delete=False, **kwargs):
         if not fmt:
             fmt = self.fmt
         metering_label = self._make_metering_label(fmt, name,
                                                    description, **kwargs)
         yield metering_label
-        if do_delete:
+        if not no_delete:
             self._delete('metering-labels',
                          metering_label['metering_label']['id'])
 
     @contextlib.contextmanager
     def metering_label_rule(self, metering_label_id=None, direction='ingress',
                             remote_ip_prefix='10.0.0.0/24',
-                            excluded='false', fmt=None, do_delete=True):
+                            excluded='false', fmt=None, no_delete=False):
         if not fmt:
             fmt = self.fmt
         metering_label_rule = self._make_metering_label_rule(fmt,
@@ -108,7 +113,7 @@ class MeteringPluginDbTestCaseMixin(object):
                                                              remote_ip_prefix,
                                                              excluded)
         yield metering_label_rule
-        if do_delete:
+        if not no_delete:
             self._delete('metering-label-rules',
                          metering_label_rule['metering_label_rule']['id'])
 
@@ -131,15 +136,13 @@ class MeteringPluginDbTestCase(test_db_plugin.NeutronDbPluginV2TestCase,
         )
 
         self.plugin = metering_plugin.MeteringPlugin()
-        ext_mgr = extensions.PluginAwareExtensionManager(
+        ext_mgr = PluginAwareExtensionManager(
             extensions_path,
             {constants.METERING: self.plugin}
         )
         app = config.load_paste_app('extensions_test_app')
-        self.ext_api = extensions.ExtensionMiddleware(app, ext_mgr=ext_mgr)
+        self.ext_api = ExtensionMiddleware(app, ext_mgr=ext_mgr)
 
-
-class TestMetering(MeteringPluginDbTestCase):
     def test_create_metering_label(self):
         name = 'my label'
         description = 'my metering label'
@@ -148,23 +151,12 @@ class TestMetering(MeteringPluginDbTestCase):
             for k, v, in keys:
                 self.assertEqual(metering_label['metering_label'][k], v)
 
-    def test_create_metering_label_shared(self):
-        name = 'my label'
-        description = 'my metering label'
-        shared = True
-        keys = [('name', name,), ('description', description),
-                ('shared', shared)]
-        with self.metering_label(name, description,
-                                 shared=shared) as metering_label:
-            for k, v, in keys:
-                self.assertEqual(metering_label['metering_label'][k], v)
-
     def test_delete_metering_label(self):
         name = 'my label'
         description = 'my metering label'
 
         with self.metering_label(name, description,
-                                 do_delete=False) as metering_label:
+                                 no_delete=True) as metering_label:
             metering_label_id = metering_label['metering_label']['id']
             self._delete('metering-labels', metering_label_id, 204)
 
@@ -215,7 +207,7 @@ class TestMetering(MeteringPluginDbTestCase):
                                           direction,
                                           remote_ip_prefix,
                                           excluded,
-                                          do_delete=False) as label_rule:
+                                          no_delete=True) as label_rule:
                 rule_id = label_rule['metering_label_rule']['id']
                 self._delete('metering-label-rules', rule_id, 204)
 
@@ -296,5 +288,5 @@ class TestMetering(MeteringPluginDbTestCase):
                                               metering_label_rule)
 
 
-class TestMeteringDbXML(TestMetering):
+class TestMeteringDbXML(MeteringPluginDbTestCase):
     fmt = 'xml'

@@ -94,7 +94,9 @@ class LogicalSwitchesTestCase(base.NsxlibTestCase):
         self.assertEqual(second_ls_tags['quantum_net_id'],
                          network_id)
 
-    def _test_update_lswitch(self, tenant_id, name, tags):
+    def test_update_lswitch(self):
+        new_name = 'new-name'
+        new_tags = [{'scope': 'new_tag', 'tag': 'xxx'}]
         transport_zones_config = [{'zone_uuid': _uuid(),
                                    'transport_type': 'stt'}]
         lswitch = switchlib.create_lswitch(self.fake_cluster,
@@ -103,28 +105,14 @@ class LogicalSwitchesTestCase(base.NsxlibTestCase):
                                            'fake-switch',
                                            transport_zones_config)
         switchlib.update_lswitch(self.fake_cluster, lswitch['uuid'],
-                                 name, tenant_id=tenant_id, tags=tags)
+                                 new_name, tags=new_tags)
         res_lswitch = switchlib.get_lswitches(self.fake_cluster,
                                               lswitch['uuid'])
         self.assertEqual(len(res_lswitch), 1)
-        self.assertEqual(res_lswitch[0]['display_name'], name)
-        if not tags:
-            # no need to validate tags
-            return
+        self.assertEqual(res_lswitch[0]['display_name'], new_name)
         switch_tags = self._build_tag_dict(res_lswitch[0]['tags'])
-        for tag in tags:
-            self.assertIn(tag['scope'], switch_tags)
-            self.assertEqual(tag['tag'], switch_tags[tag['scope']])
-
-    def test_update_lswitch(self):
-        self._test_update_lswitch(None, 'new-name',
-                                  [{'scope': 'new_tag', 'tag': 'xxx'}])
-
-    def test_update_lswitch_no_tags(self):
-        self._test_update_lswitch(None, 'new-name', None)
-
-    def test_update_lswitch_tenant_id(self):
-        self._test_update_lswitch('whatever', 'new-name', None)
+        self.assertIn('new_tag', switch_tags)
+        self.assertEqual(switch_tags['new_tag'], 'xxx')
 
     def test_update_non_existing_lswitch_raises(self):
         self.assertRaises(exceptions.NetworkNotFound,

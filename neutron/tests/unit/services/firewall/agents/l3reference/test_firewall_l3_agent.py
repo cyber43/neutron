@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright (c) 2013 OpenStack Foundation
 # All Rights Reserved.
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,10 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Sumit Naiksatam, sumitnaiksatam@gmail.com, Big Switch Networks, Inc.
+# @author: Sridar Kandaswamy, skandasw@cisco.com, Cisco Systems, Inc.
+# @author: Dan Florea, dflorea@cisco.com, Cisco Systems, Inc.
 
 import contextlib
 import uuid
@@ -20,12 +26,10 @@ from oslo.config import cfg
 
 from neutron.agent.common import config as agent_config
 from neutron.agent import l3_agent
-from neutron.agent import l3_ha_agent
 from neutron.agent.linux import ip_lib
 from neutron.common import config as base_config
 from neutron import context
 from neutron.plugins.common import constants
-from neutron.services.firewall.agents import firewall_agent_api
 from neutron.services.firewall.agents.l3reference import firewall_l3_agent
 from neutron.tests import base
 from neutron.tests.unit.services.firewall.agents import test_firewall_agent_api
@@ -37,15 +41,8 @@ class FWaasHelper(object):
 
 
 class FWaasAgent(firewall_l3_agent.FWaaSL3AgentRpcCallback, FWaasHelper):
-    neutron_service_plugins = []
-
-
-def _setup_test_agent_class(service_plugins):
-    class FWaasTestAgent(firewall_l3_agent.FWaaSL3AgentRpcCallback,
-                         FWaasHelper):
-        neutron_service_plugins = service_plugins
-
-    return FWaasTestAgent
+    def __init__(self, conf=None):
+        super(FWaasAgent, self).__init__(conf)
 
 
 class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
@@ -55,30 +52,11 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
         self.conf = cfg.ConfigOpts()
         self.conf.register_opts(base_config.core_opts)
         self.conf.register_opts(l3_agent.L3NATAgent.OPTS)
-        self.conf.register_opts(l3_ha_agent.OPTS)
         agent_config.register_use_namespaces_opts_helper(self.conf)
         agent_config.register_root_helper(self.conf)
         self.conf.root_helper = 'sudo'
-        self.conf.register_opts(firewall_agent_api.FWaaSOpts, 'fwaas')
         self.api = FWaasAgent(self.conf)
         self.api.fwaas_driver = test_firewall_agent_api.NoopFwaasDriver()
-
-    def test_fw_config_match(self):
-        test_agent_class = _setup_test_agent_class([constants.FIREWALL])
-        cfg.CONF.set_override('enabled', True, 'fwaas')
-        with mock.patch('neutron.openstack.common.importutils.import_object'):
-            test_agent_class(cfg.CONF)
-
-    def test_fw_config_mismatch_plugin_enabled_agent_disabled(self):
-        test_agent_class = _setup_test_agent_class([constants.FIREWALL])
-        cfg.CONF.set_override('enabled', False, 'fwaas')
-        self.assertRaises(SystemExit, test_agent_class, cfg.CONF)
-
-    def test_fw_plugin_list_unavailable(self):
-        test_agent_class = _setup_test_agent_class(None)
-        cfg.CONF.set_override('enabled', False, 'fwaas')
-        with mock.patch('neutron.openstack.common.importutils.import_object'):
-            test_agent_class(cfg.CONF)
 
     def test_create_firewall(self):
         fake_firewall = {'id': 0}
@@ -247,7 +225,6 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
                                'admin_state_up': True}]
         fake_router = {'id': 1111, 'tenant_id': 2}
         self.api.plugin_rpc = mock.Mock()
-        agent_mode = 'legacy'
         ri = mock.Mock()
         ri.router = fake_router
         routers = [ri.router]
@@ -278,8 +255,7 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
                 routers,
                 ri.router['tenant_id'])
             mock_get_firewalls_for_tenant.assert_called_once_with(ctx)
-            mock_driver_update_firewall.assert_called_once_with(
-                agent_mode,
+            mock_driver_update_firewall.assert_called_once(
                 routers,
                 fake_firewall_list[0])
 
@@ -292,7 +268,6 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
         fake_firewall_list = [{'id': 0, 'tenant_id': 1,
                                'status': constants.PENDING_DELETE}]
         fake_router = {'id': 1111, 'tenant_id': 2}
-        agent_mode = 'legacy'
         self.api.plugin_rpc = mock.Mock()
         ri = mock.Mock()
         ri.router = fake_router
@@ -324,8 +299,7 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
                 routers,
                 ri.router['tenant_id'])
             mock_get_firewalls_for_tenant.assert_called_once_with(ctx)
-            mock_driver_delete_firewall.assert_called_once_with(
-                agent_mode,
+            mock_driver_delete_firewall.assert_called_once(
                 routers,
                 fake_firewall_list[0])
 
@@ -335,9 +309,8 @@ class TestFwaasL3AgentRpcCallback(base.BaseTestCase):
 
     def _prepare_router_data(self, use_namespaces):
         router = {'id': str(uuid.uuid4()), 'tenant_id': str(uuid.uuid4())}
-        ns = "ns-" + router['id']
         return l3_agent.RouterInfo(router['id'], self.conf.root_helper,
-                                   use_namespaces, router=router, ns_name=ns)
+                                   use_namespaces, router=router)
 
     def _get_router_info_list_with_namespace_helper(self,
                                                     router_use_namespaces):

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,13 +13,14 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 from oslo.config import cfg
 
 from neutron.agent import rpc as agent_rpc
 from neutron.common import constants as n_const
 from neutron.common import exceptions as n_exc
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron import context
 from neutron.openstack.common import importutils
@@ -43,7 +46,7 @@ class DeviceNotFoundOnAgent(n_exc.NotFound):
     msg = _('Unknown device with pool_id %(pool_id)s')
 
 
-class LbaasAgentManager(n_rpc.RpcCallback, periodic_task.PeriodicTasks):
+class LbaasAgentManager(periodic_task.PeriodicTasks):
 
     RPC_API_VERSION = '2.0'
     # history
@@ -55,7 +58,6 @@ class LbaasAgentManager(n_rpc.RpcCallback, periodic_task.PeriodicTasks):
     #       object individually;
 
     def __init__(self, conf):
-        super(LbaasAgentManager, self).__init__()
         self.conf = conf
         self.context = context.get_admin_context_without_session()
         self.plugin_rpc = agent_api.LbaasAgentApi(

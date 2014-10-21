@@ -15,12 +15,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
-import sys
-import time
+# @author: Kevin Benton, kevin.benton@bigswitch.com
 
 import eventlet
-eventlet.monkey_patch()
+import sys
+import time
 
 from oslo.config import cfg
 
@@ -29,12 +28,12 @@ from neutron.agent.linux import utils
 from neutron.agent import rpc as agent_rpc
 from neutron.agent import securitygroups_rpc as sg_rpc
 from neutron.common import config
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron import context as q_context
 from neutron.extensions import securitygroup as ext_sg
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log
+from neutron.openstack.common.rpc import dispatcher
 from neutron.plugins.bigswitch import config as pl_config
 
 LOG = log.getLogger(__name__)
@@ -83,8 +82,7 @@ class SecurityGroupAgent(sg_rpc.SecurityGroupAgentRpcMixin):
         self.init_firewall()
 
 
-class RestProxyAgent(n_rpc.RpcCallback,
-                     sg_rpc.SecurityGroupAgentRpcCallbackMixin):
+class RestProxyAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
 
     RPC_API_VERSION = '1.1'
 
@@ -104,10 +102,10 @@ class RestProxyAgent(n_rpc.RpcCallback,
         self.topic = topics.AGENT
         self.plugin_rpc = PluginApi(topics.PLUGIN)
         self.context = q_context.get_admin_context_without_session()
-        self.endpoints = [self]
+        self.dispatcher = dispatcher.RpcDispatcher([self])
         consumers = [[topics.PORT, topics.UPDATE],
                      [topics.SECURITY_GROUP, topics.UPDATE]]
-        self.connection = agent_rpc.create_consumers(self.endpoints,
+        self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)
 
@@ -164,8 +162,9 @@ class RestProxyAgent(n_rpc.RpcCallback,
 
 
 def main():
-    config.init(sys.argv[1:])
-    config.setup_logging()
+    eventlet.monkey_patch()
+    cfg.CONF(project='neutron')
+    config.setup_logging(cfg.CONF)
     pl_config.register_config()
 
     integ_br = cfg.CONF.RESTPROXYAGENT.integration_bridge

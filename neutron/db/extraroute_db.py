@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013, Nachi Ueno, NTT MCL, Inc.
 # All Rights Reserved.
 #
@@ -51,11 +53,11 @@ class RouterRoute(model_base.BASEV2, models_v2.Route):
                                                   cascade='delete'))
 
 
-class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
+class ExtraRoute_db_mixin(l3_db.L3_NAT_db_mixin):
     """Mixin class to support extra route configuration on router."""
 
     def _extend_router_dict_extraroute(self, router_res, router_db):
-        router_res['routes'] = (ExtraRoute_dbonly_mixin.
+        router_res['routes'] = (ExtraRoute_db_mixin.
                                 _make_extra_route_list(
                                     router_db['route_list']
                                 ))
@@ -71,7 +73,7 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
             if 'routes' in r:
                 self._update_extra_routes(context, router_db, r['routes'])
             routes = self._get_extra_routes_by_router_id(context, id)
-        router_updated = super(ExtraRoute_dbonly_mixin, self).update_router(
+        router_updated = super(ExtraRoute_db_mixin, self).update_router(
             context, id, router)
         router_updated['routes'] = routes
 
@@ -81,19 +83,26 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
         query_subnets = context.session.query(models_v2.Subnet)
         return query_subnets.filter_by(cidr=cidr).all()
 
-    def _validate_routes_nexthop(self, cidrs, ips, routes, nexthop):
+    def _validate_routes_nexthop(self, context, ports, routes, nexthop):
         #Note(nati): Nexthop should be connected,
         # so we need to check
         # nexthop belongs to one of cidrs of the router ports
+        cidrs = []
+        for port in ports:
+            cidrs += [self._core_plugin._get_subnet(context,
+                                                    ip['subnet_id'])['cidr']
+                      for ip in port['fixed_ips']]
         if not netaddr.all_matching_cidrs(nexthop, cidrs):
             raise extraroute.InvalidRoutes(
                 routes=routes,
                 reason=_('the nexthop is not connected with router'))
         #Note(nati) nexthop should not be same as fixed_ips
-        if nexthop in ips:
-            raise extraroute.InvalidRoutes(
-                routes=routes,
-                reason=_('the nexthop is used by router'))
+        for port in ports:
+            for ip in port['fixed_ips']:
+                if nexthop == ip['ip_address']:
+                    raise extraroute.InvalidRoutes(
+                        routes=routes,
+                        reason=_('the nexthop is used by router'))
 
     def _validate_routes(self, context,
                          router_id, routes):
@@ -104,21 +113,14 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
 
         filters = {'device_id': [router_id]}
         ports = self._core_plugin.get_ports(context, filters)
-        cidrs = []
-        ips = []
-        for port in ports:
-            for ip in port['fixed_ips']:
-                cidrs.append(self._core_plugin._get_subnet(
-                    context, ip['subnet_id'])['cidr'])
-                ips.append(ip['ip_address'])
         for route in routes:
             self._validate_routes_nexthop(
-                cidrs, ips, routes, route['nexthop'])
+                context, ports, routes, route['nexthop'])
 
     def _update_extra_routes(self, context, router, routes):
         self._validate_routes(context, router['id'],
                               routes)
-        old_routes, routes_dict = self._get_extra_routes_dict_by_router_id(
+        old_routes = self._get_extra_routes_by_router_id(
             context, router['id'])
         added, removed = utils.diff_list_of_dict(old_routes,
                                                  routes)
@@ -132,8 +134,10 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
 
         LOG.debug(_('Removed routes are %s'), removed)
         for route in removed:
-            context.session.delete(
-                routes_dict[(route['destination'], route['nexthop'])])
+            del_context = context.session.query(RouterRoute)
+            del_context.filter_by(router_id=router['id'],
+                                  destination=route['destination'],
+                                  nexthop=route['nexthop']).delete()
 
     @staticmethod
     def _make_extra_route_list(extra_routes):
@@ -146,20 +150,9 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
         query = query.filter_by(router_id=id)
         return self._make_extra_route_list(query)
 
-    def _get_extra_routes_dict_by_router_id(self, context, id):
-        query = context.session.query(RouterRoute)
-        query = query.filter_by(router_id=id)
-        routes = []
-        routes_dict = {}
-        for route in query:
-            routes.append({'destination': route['destination'],
-                           'nexthop': route['nexthop']})
-            routes_dict[(route['destination'], route['nexthop'])] = route
-        return routes, routes_dict
-
     def get_router(self, context, id, fields=None):
         with context.session.begin(subtransactions=True):
-            router = super(ExtraRoute_dbonly_mixin, self).get_router(
+            router = super(ExtraRoute_db_mixin, self).get_router(
                 context, id, fields)
             return router
 
@@ -167,15 +160,14 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
                     sorts=None, limit=None, marker=None,
                     page_reverse=False):
         with context.session.begin(subtransactions=True):
-            routers = super(ExtraRoute_dbonly_mixin, self).get_routers(
+            routers = super(ExtraRoute_db_mixin, self).get_routers(
                 context, filters, fields, sorts=sorts, limit=limit,
                 marker=marker, page_reverse=page_reverse)
             return routers
 
     def _confirm_router_interface_not_in_use(self, context, router_id,
                                              subnet_id):
-        super(ExtraRoute_dbonly_mixin,
-            self)._confirm_router_interface_not_in_use(
+        super(ExtraRoute_db_mixin, self)._confirm_router_interface_not_in_use(
             context, router_id, subnet_id)
         subnet_db = self._core_plugin._get_subnet(context, subnet_id)
         subnet_cidr = netaddr.IPNetwork(subnet_db['cidr'])
@@ -184,8 +176,3 @@ class ExtraRoute_dbonly_mixin(l3_db.L3_NAT_dbonly_mixin):
             if netaddr.all_matching_cidrs(route['nexthop'], [subnet_cidr]):
                 raise extraroute.RouterInterfaceInUseByRoute(
                     router_id=router_id, subnet_id=subnet_id)
-
-
-class ExtraRoute_db_mixin(ExtraRoute_dbonly_mixin, l3_db.L3_NAT_db_mixin):
-    """Mixin class to support extra route configuration on router with rpc."""
-    pass

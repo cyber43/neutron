@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -63,13 +65,6 @@ class IPAvailabilityRange(model_base.BASEV2):
                                    primary_key=True)
     first_ip = sa.Column(sa.String(64), nullable=False, primary_key=True)
     last_ip = sa.Column(sa.String(64), nullable=False, primary_key=True)
-    __table_args__ = (
-        sa.UniqueConstraint(
-            first_ip, allocation_pool_id,
-            name='uniq_ipavailabilityranges0first_ip0allocation_pool_id'),
-        sa.UniqueConstraint(
-            last_ip, allocation_pool_id,
-            name='uniq_ipavailabilityranges0last_ip0allocation_pool_id'))
 
     def __repr__(self):
         return "%s - %s" % (self.first_ip, self.last_ip)
@@ -86,7 +81,7 @@ class IPAllocationPool(model_base.BASEV2, HasId):
     available_ranges = orm.relationship(IPAvailabilityRange,
                                         backref='ipallocationpool',
                                         lazy="joined",
-                                        cascade='all, delete-orphan')
+                                        cascade='delete')
 
     def __repr__(self):
         return "%s - %s" % (self.first_ip, self.last_ip)
@@ -184,21 +179,19 @@ class Subnet(model_base.BASEV2, HasId, HasTenant):
     enable_dhcp = sa.Column(sa.Boolean())
     dns_nameservers = orm.relationship(DNSNameServer,
                                        backref='subnet',
-                                       cascade='all, delete, delete-orphan',
-                                       lazy='joined')
+                                       cascade='all, delete, delete-orphan')
     routes = orm.relationship(SubnetRoute,
                               backref='subnet',
-                              cascade='all, delete, delete-orphan',
-                              lazy='joined')
+                              cascade='all, delete, delete-orphan')
     shared = sa.Column(sa.Boolean)
     ipv6_ra_mode = sa.Column(sa.Enum(constants.IPV6_SLAAC,
                                      constants.DHCPV6_STATEFUL,
                                      constants.DHCPV6_STATELESS,
-                                     name='ipv6_ra_modes'), nullable=True)
+                                     name='ipv6_modes'), nullable=True)
     ipv6_address_mode = sa.Column(sa.Enum(constants.IPV6_SLAAC,
                                   constants.DHCPV6_STATEFUL,
                                   constants.DHCPV6_STATELESS,
-                                  name='ipv6_address_modes'), nullable=True)
+                                  name='ipv6_modes'), nullable=True)
 
 
 class Network(model_base.BASEV2, HasId, HasTenant):

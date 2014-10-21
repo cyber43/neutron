@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012,  Nachi Ueno,  NTT MCL,  Inc.
 # All Rights Reserved.
 #
@@ -20,7 +22,7 @@ import netaddr
 from oslo.config import cfg
 
 from neutron.agent.common import config
-from neutron.agent.linux import dhcp
+from neutron.agent.linux.dhcp import DictModel
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.openstack.common import log as logging
@@ -83,18 +85,17 @@ class NeutronDebugAgent():
 
     def _get_subnet(self, subnet_id):
         subnet_dict = self.client.show_subnet(subnet_id)['subnet']
-        return dhcp.DictModel(subnet_dict)
+        return DictModel(subnet_dict)
 
     def _get_network(self, network_id):
         network_dict = self.client.show_network(network_id)['network']
-        network = dhcp.DictModel(network_dict)
+        network = DictModel(network_dict)
         network.external = network_dict.get('router:external')
         obj_subnet = [self._get_subnet(s_id) for s_id in network.subnets]
         network.subnets = obj_subnet
         return network
 
-    def clear_probes(self):
-        """Returns number of deleted probes"""
+    def clear_probe(self):
         ports = self.client.list_ports(
             device_id=socket.gethostname(),
             device_owner=[DEVICE_OWNER_NETWORK_PROBE,
@@ -102,10 +103,9 @@ class NeutronDebugAgent():
         info = ports['ports']
         for port in info:
             self.delete_probe(port['id'])
-        return len(info)
 
     def delete_probe(self, port_id):
-        port = dhcp.DictModel(self.client.show_port(port_id)['port'])
+        port = DictModel(self.client.show_port(port_id)['port'])
         network = self._get_network(port.network_id)
         bridge = None
         if network.external:
@@ -131,12 +131,11 @@ class NeutronDebugAgent():
                           DEVICE_OWNER_COMPUTE_PROBE])
         info = ports['ports']
         for port in info:
-            port['device_name'] = self.driver.get_device_name(
-                dhcp.DictModel(port))
+            port['device_name'] = self.driver.get_device_name(DictModel(port))
         return info
 
     def exec_command(self, port_id, command=None):
-        port = dhcp.DictModel(self.client.show_port(port_id)['port'])
+        port = DictModel(self.client.show_port(port_id)['port'])
         ip = ip_lib.IPWrapper(self.root_helper)
         namespace = self._get_namespace(port)
         if self.conf.use_namespaces:
@@ -153,7 +152,7 @@ class NeutronDebugAgent():
                                        device_owner=DEVICE_OWNER_NETWORK_PROBE)
         info = ports.get('ports', [])
         if info:
-            return dhcp.DictModel(info[0])
+            return DictModel(info[0])
         else:
             return self.create_probe(network_id)
 
@@ -191,7 +190,7 @@ class NeutronDebugAgent():
                          'fixed_ips': [dict(subnet_id=s.id)
                                        for s in network.subnets]}}
         port_dict = self.client.create_port(body)['port']
-        port = dhcp.DictModel(port_dict)
+        port = DictModel(port_dict)
         port.network = network
         for fixed_ip in port.fixed_ips:
             fixed_ip.subnet = self._get_subnet(fixed_ip.subnet_id)

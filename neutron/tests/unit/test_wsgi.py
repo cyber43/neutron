@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -35,11 +37,6 @@ TEST_VAR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                '..', 'var'))
 
 
-def open_no_proxy(*args, **kwargs):
-    opener = urllib2.build_opener(urllib2.ProxyHandler({}))
-    return opener.open(*args, **kwargs)
-
-
 class TestWSGIServer(base.BaseTestCase):
     """WSGI server tests."""
 
@@ -50,16 +47,18 @@ class TestWSGIServer(base.BaseTestCase):
         server.stop()
         server.wait()
 
-    @mock.patch('neutron.openstack.common.service.ProcessLauncher')
+    @mock.patch('neutron.wsgi.ProcessLauncher')
     def test_start_multiple_workers(self, ProcessLauncher):
         launcher = ProcessLauncher.return_value
 
         server = wsgi.Server("test_multiple_processes")
         server.start(None, 0, host="127.0.0.1", workers=2)
-        launcher.launch_service.assert_called_once_with(mock.ANY, workers=2)
+        launcher.running = True
+        launcher.launch_service.assert_called_once_with(server._server,
+                                                        workers=2)
 
         server.stop()
-        launcher.stop.assert_called_once_with()
+        self.assertFalse(launcher.running)
 
         server.wait()
         launcher.wait.assert_called_once_with()
@@ -123,8 +122,7 @@ class TestWSGIServer(base.BaseTestCase):
         server = wsgi.Server("test_app")
         server.start(hello_world, 0, host="127.0.0.1")
 
-        response = open_no_proxy('http://127.0.0.1:%d/' % server.port)
-
+        response = urllib2.urlopen('http://127.0.0.1:%d/' % server.port)
         self.assertEqual(greetings, response.read())
 
         server.stop()
@@ -1092,28 +1090,7 @@ class TestWSGIServerWithSSL(base.BaseTestCase):
         server = wsgi.Server("test_app")
         server.start(hello_world, 0, host="127.0.0.1")
 
-        response = open_no_proxy('https://127.0.0.1:%d/' % server.port)
-
-        self.assertEqual(greetings, response.read())
-
-        server.stop()
-
-    def test_app_using_ssl_combined_cert_and_key(self):
-        CONF.set_default('use_ssl', True)
-        CONF.set_default("ssl_cert_file",
-                         os.path.join(TEST_VAR_DIR, 'certandkey.pem'))
-
-        greetings = 'Hello, World!!!'
-
-        @webob.dec.wsgify
-        def hello_world(req):
-            return greetings
-
-        server = wsgi.Server("test_app")
-        server.start(hello_world, 0, host="127.0.0.1")
-
-        response = open_no_proxy('https://127.0.0.1:%d/' % server.port)
-
+        response = urllib2.urlopen('https://127.0.0.1:%d/' % server.port)
         self.assertEqual(greetings, response.read())
 
         server.stop()
@@ -1134,8 +1111,7 @@ class TestWSGIServerWithSSL(base.BaseTestCase):
         server = wsgi.Server("test_app")
         server.start(hello_world, 0, host="::1")
 
-        response = open_no_proxy('https://[::1]:%d/' % server.port)
-
+        response = urllib2.urlopen('https://[::1]:%d/' % server.port)
         self.assertEqual(greetings, response.read())
 
         server.stop()

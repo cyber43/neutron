@@ -32,11 +32,10 @@ class RestProxySecurityGroupsTestCase(test_sg.SecurityGroupDBTestCase,
         super(RestProxySecurityGroupsTestCase, self).setUp(self.plugin_str)
         plugin = manager.NeutronManager.get_plugin()
         self.notifier = plugin.notifier
-        self.rpc = plugin.endpoints[0]
-        self.startHttpPatch()
+        self.rpc = plugin.callbacks
 
 
-class TestSecServerRpcCallBack(test_sg_rpc.SGServerRpcCallBackTestCase,
+class TestSecServerRpcCallBack(test_sg_rpc.SGServerRpcCallBackMixinTestCase,
                                RestProxySecurityGroupsTestCase):
     pass
 

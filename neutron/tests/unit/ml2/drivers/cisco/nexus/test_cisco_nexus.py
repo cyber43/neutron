@@ -18,6 +18,7 @@ import mock
 import testtools
 
 from neutron.common import constants as n_const
+from neutron.db import api as db
 from neutron.extensions import portbindings
 from neutron.openstack.common import importutils
 from neutron.plugins.ml2 import driver_api as api
@@ -26,28 +27,23 @@ from neutron.plugins.ml2.drivers.cisco.nexus import exceptions
 from neutron.plugins.ml2.drivers.cisco.nexus import mech_cisco_nexus
 from neutron.plugins.ml2.drivers.cisco.nexus import nexus_db_v2
 from neutron.plugins.ml2.drivers.cisco.nexus import nexus_network_driver
-from neutron.tests.unit import testlib_api
+from neutron.tests import base
 
 
 NEXUS_IP_ADDRESS = '1.1.1.1'
 NEXUS_IP_ADDRESS_PC = '2.2.2.2'
-NEXUS_IP_ADDRESS_DUAL = '3.3.3.3'
 HOST_NAME_1 = 'testhost1'
 HOST_NAME_2 = 'testhost2'
 HOST_NAME_PC = 'testpchost'
-HOST_NAME_DUAL = 'testdualhost'
 INSTANCE_1 = 'testvm1'
 INSTANCE_2 = 'testvm2'
 INSTANCE_PC = 'testpcvm'
-INSTANCE_DUAL = 'testdualvm'
-NEXUS_PORT_1 = 'ethernet:1/10'
-NEXUS_PORT_2 = 'ethernet:1/20'
+NEXUS_PORT_1 = '1/10'
+NEXUS_PORT_2 = '1/20'
 NEXUS_PORTCHANNELS = 'portchannel:2'
-NEXUS_DUAL = 'ethernet:1/3,portchannel:2'
 VLAN_ID_1 = 267
 VLAN_ID_2 = 265
 VLAN_ID_PC = 268
-VLAN_ID_DUAL = 269
 DEVICE_OWNER = 'compute:test'
 NEXUS_SSH_PORT = '22'
 PORT_STATE = n_const.PORT_STATUS_ACTIVE
@@ -78,8 +74,7 @@ class FakePortContext(object):
             'status': PORT_STATE,
             'device_id': device_id,
             'device_owner': DEVICE_OWNER,
-            portbindings.HOST_ID: host_name,
-            portbindings.VIF_TYPE: portbindings.VIF_TYPE_OVS
+            portbindings.HOST_ID: host_name
         }
         self._network = network_context
         self._segment = network_context.network_segments
@@ -97,7 +92,7 @@ class FakePortContext(object):
         return self._segment
 
 
-class TestCiscoNexusDevice(testlib_api.SqlTestCase):
+class TestCiscoNexusDevice(base.BaseTestCase):
 
     """Unit tests for Cisco ML2 Nexus device driver."""
 
@@ -124,12 +119,17 @@ class TestCiscoNexusDevice(testlib_api.SqlTestCase):
             NEXUS_PORTCHANNELS,
             INSTANCE_PC,
             VLAN_ID_PC),
-        'test_config_dual': TestConfigObj(
-            NEXUS_IP_ADDRESS_DUAL,
-            HOST_NAME_DUAL,
-            NEXUS_DUAL,
-            INSTANCE_DUAL,
-            VLAN_ID_DUAL),
+    }
+
+    test_credentials = {
+        NEXUS_IP_ADDRESS: {
+            constants.USERNAME: 'admin',
+            constants.PASSWORD: 'pass1234'
+        },
+        NEXUS_IP_ADDRESS_PC: {
+            constants.USERNAME: 'admin',
+            constants.PASSWORD: 'password'
+        },
     }
 
     def setUp(self):
@@ -154,17 +154,20 @@ class TestCiscoNexusDevice(testlib_api.SqlTestCase):
                                                host_name)] = nexus_port
                 mech_instance._nexus_switches[(ip_addr,
                                                'ssh_port')] = NEXUS_SSH_PORT
-                mech_instance._nexus_switches[(ip_addr,
-                                               constants.USERNAME)] = 'admin'
-                mech_instance._nexus_switches[(ip_addr,
-                                              constants.PASSWORD)] = 'password'
             mech_instance.driver.nexus_switches = (
                 mech_instance._nexus_switches)
+
+            mech_instance.driver.credentials = (
+                TestCiscoNexusDevice.test_credentials)
+
+            db.configure_db()
 
         mock.patch.object(mech_cisco_nexus.CiscoNexusMechanismDriver,
                           '__init__', new=new_nexus_init).start()
         self._cisco_mech_driver = (mech_cisco_nexus.
                                    CiscoNexusMechanismDriver())
+
+        self.addCleanup(db.clear_db)
 
     def _create_delete_port(self, port_config):
         """Tests creation and deletion of a virtual port."""
@@ -180,22 +183,19 @@ class TestCiscoNexusDevice(testlib_api.SqlTestCase):
 
         self._cisco_mech_driver.update_port_precommit(port_context)
         self._cisco_mech_driver.update_port_postcommit(port_context)
-        for port_id in nexus_port.split(','):
-            bindings = nexus_db_v2.get_nexusport_binding(port_id,
-                                                         vlan_id,
-                                                         nexus_ip_addr,
-                                                         instance_id)
-            self.assertEqual(len(bindings), 1)
+        bindings = nexus_db_v2.get_nexusport_binding(nexus_port,
+                                                     vlan_id,
+                                                     nexus_ip_addr,
+                                                     instance_id)
+        self.assertEqual(len(bindings), 1)
 
         self._cisco_mech_driver.delete_port_precommit(port_context)
         self._cisco_mech_driver.delete_port_postcommit(port_context)
-        for port_id in nexus_port.split(','):
-            with testtools.ExpectedException(
-                    exceptions.NexusPortBindingNotFound):
-                nexus_db_v2.get_nexusport_binding(port_id,
-                                                  vlan_id,
-                                                  nexus_ip_addr,
-                                                  instance_id)
+        with testtools.ExpectedException(exceptions.NexusPortBindingNotFound):
+            nexus_db_v2.get_nexusport_binding(nexus_port,
+                                              vlan_id,
+                                              nexus_ip_addr,
+                                              instance_id)
 
     def test_create_delete_ports(self):
         """Tests creation and deletion of two new virtual Ports."""
@@ -209,8 +209,3 @@ class TestCiscoNexusDevice(testlib_api.SqlTestCase):
         """Tests creation of a port over a portchannel."""
         self._create_delete_port(
             TestCiscoNexusDevice.test_configs['test_config_portchannel'])
-
-    def test_create_delete_dual(self):
-        """Tests creation and deletion of dual ports for single server"""
-        self._create_delete_port(
-            TestCiscoNexusDevice.test_configs['test_config_dual'])

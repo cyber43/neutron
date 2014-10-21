@@ -15,13 +15,13 @@
 #    under the License.
 #
 
-from oslo.db import exception as d_exc
 from sqlalchemy import Column
 from sqlalchemy import ForeignKey
 from sqlalchemy import orm
 from sqlalchemy import String
 
 from neutron.db import models_v2
+from neutron.openstack.common.db import exception as d_exc
 from neutron.openstack.common import log as logging
 from neutron.plugins.vmware.common import exceptions as p_exc
 
@@ -35,8 +35,7 @@ class LsnPort(models_v2.model_base.BASEV2):
 
     lsn_port_id = Column(String(36), primary_key=True)
 
-    lsn_id = Column(String(36), ForeignKey('lsn.lsn_id', ondelete="CASCADE"),
-                    nullable=False)
+    lsn_id = Column(String(36), ForeignKey('lsn.lsn_id', ondelete="CASCADE"))
     sub_id = Column(String(36), nullable=False, unique=True)
     mac_addr = Column(String(32), nullable=False, unique=True)
 

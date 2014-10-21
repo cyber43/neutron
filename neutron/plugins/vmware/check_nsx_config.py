@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc.
 # All Rights Reserved
 #
@@ -24,7 +26,7 @@ from neutron.plugins.vmware.common import config as nsx_config  # noqa
 from neutron.plugins.vmware.common import nsx_utils
 from neutron.plugins.vmware import nsxlib
 
-config.setup_logging()
+config.setup_logging(cfg.CONF)
 
 
 def help(name):
@@ -88,7 +90,7 @@ def main():
         help(sys.argv[0])
     args = ['--config-file']
     args.append(sys.argv[1])
-    config.init(args)
+    config.parse(args)
     print("----------------------- Database Options -----------------------")
     print("\tconnection: %s" % cfg.CONF.database.connection)
     print("\tretry_interval: %d" % cfg.CONF.database.retry_interval)
@@ -100,6 +102,7 @@ def main():
     print("\tmax_lp_per_bridged_ls: %s" % cfg.CONF.NSX.max_lp_per_bridged_ls)
     print("\tmax_lp_per_overlay_ls: %s" % cfg.CONF.NSX.max_lp_per_overlay_ls)
     print("-----------------------  Cluster Options -----------------------")
+    print("\trequested_timeout: %s" % cfg.CONF.req_timeout)
     print("\tretries: %s" % cfg.CONF.retries)
     print("\tredirects: %s" % cfg.CONF.redirects)
     print("\thttp_timeout: %s" % cfg.CONF.http_timeout)

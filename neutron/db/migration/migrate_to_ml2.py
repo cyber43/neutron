@@ -34,7 +34,7 @@ Example usage:
   python -m neutron.db.migration.migrate_to_ml2 openvswitch \
       mysql://login:pass@127.0.0.1/neutron
 
-Note that migration of tunneling state will only be attempted if the
+Note that migration of tunneling state will only be attemped if the
 --tunnel-type parameter is provided.
 
 To manually test migration from ovs to ml2 with devstack:
@@ -60,7 +60,6 @@ To manually test migration from ovs to ml2 with devstack:
 
 import argparse
 
-from oslo.db.sqlalchemy import session
 import sqlalchemy as sa
 
 from neutron.extensions import portbindings
@@ -75,10 +74,9 @@ OPENVSWITCH = 'openvswitch'
 
 # Releases
 ICEHOUSE = 'icehouse'
-JUNO = 'juno'
 
 
-SUPPORTED_SCHEMA_VERSIONS = [ICEHOUSE, JUNO]
+SUPPORTED_SCHEMA_VERSIONS = [ICEHOUSE]
 
 
 def check_db_schema_version(engine, metadata):
@@ -116,7 +114,7 @@ def interpret_vlan_id(vlan_id):
         return (p_const.TYPE_VLAN, vlan_id)
 
 
-class BaseMigrateToMl2(object):
+class BaseMigrateToMl2_Icehouse(object):
 
     def __init__(self, vif_type, driver_type, segment_table_name,
                  vlan_allocation_table_name, old_tables):
@@ -128,12 +126,11 @@ class BaseMigrateToMl2(object):
 
     def __call__(self, connection_url, save_tables=False, tunnel_type=None,
                  vxlan_udp_port=None):
-        engine = session.create_engine(connection_url)
+        engine = sa.create_engine(connection_url)
         metadata = sa.MetaData()
         check_db_schema_version(engine, metadata)
 
-        if hasattr(self, 'define_ml2_tables'):
-            self.define_ml2_tables(metadata)
+        self.define_ml2_tables(metadata)
 
         # Autoload the ports table to ensure that foreign keys to it and
         # the network table can be created for the new tables.
@@ -146,8 +143,7 @@ class BaseMigrateToMl2(object):
         self.migrate_vlan_allocations(engine)
         self.migrate_port_bindings(engine, metadata)
 
-        if hasattr(self, 'drop_old_tables'):
-            self.drop_old_tables(engine, save_tables)
+        self.drop_old_tables(engine, save_tables)
 
     def migrate_segment_dict(self, binding):
         binding['id'] = uuidutils.generate_uuid()
@@ -174,7 +170,7 @@ class BaseMigrateToMl2(object):
           INSERT INTO ml2_vlan_allocations
             SELECT physical_network, vlan_id, allocated
               FROM %(source_table)s
-              WHERE allocated = TRUE
+              WHERE allocated = 1
         """) % {'source_table': self.vlan_allocation_table_name})
 
     def get_port_segment_map(self, engine):
@@ -213,13 +209,6 @@ class BaseMigrateToMl2(object):
             ml2_port_bindings = metadata.tables['ml2_port_bindings']
             engine.execute(ml2_port_bindings.insert(), ml2_bindings)
 
-
-class BaseMigrateToMl2_IcehouseMixin(object):
-    """A mixin to ensure ml2 database schema state for Icehouse.
-
-    This classes the missing tables for Icehouse schema revisions.  In Juno,
-    the schema state has been healed, so we do not need to run these.
-    """
     def drop_old_tables(self, engine, save_tables=False):
         if save_tables:
             return
@@ -361,10 +350,10 @@ class BaseMigrateToMl2_IcehouseMixin(object):
         )
 
 
-class MigrateLinuxBridgeToMl2_Juno(BaseMigrateToMl2):
+class MigrateLinuxBridgeToMl2_Icehouse(BaseMigrateToMl2_Icehouse):
 
     def __init__(self):
-        super(MigrateLinuxBridgeToMl2_Juno, self).__init__(
+        super(MigrateLinuxBridgeToMl2_Icehouse, self).__init__(
             vif_type=portbindings.VIF_TYPE_BRIDGE,
             driver_type=LINUXBRIDGE,
             segment_table_name='network_bindings',
@@ -372,7 +361,7 @@ class MigrateLinuxBridgeToMl2_Juno(BaseMigrateToMl2):
             old_tables=['portbindingports'])
 
     def migrate_segment_dict(self, binding):
-        super(MigrateLinuxBridgeToMl2_Juno, self).migrate_segment_dict(
+        super(MigrateLinuxBridgeToMl2_Icehouse, self).migrate_segment_dict(
             binding)
         vlan_id = binding.pop('vlan_id')
         network_type, segmentation_id = interpret_vlan_id(vlan_id)
@@ -380,10 +369,10 @@ class MigrateLinuxBridgeToMl2_Juno(BaseMigrateToMl2):
         binding['segmentation_id'] = segmentation_id
 
 
-class MigrateOpenvswitchToMl2_Juno(BaseMigrateToMl2):
+class MigrateOpenvswitchToMl2_Icehouse(BaseMigrateToMl2_Icehouse):
 
     def __init__(self):
-        super(MigrateOpenvswitchToMl2_Juno, self).__init__(
+        super(MigrateOpenvswitchToMl2_Icehouse, self).__init__(
             vif_type=portbindings.VIF_TYPE_OVS,
             driver_type=OPENVSWITCH,
             segment_table_name='ovs_network_bindings',
@@ -400,7 +389,7 @@ class MigrateOpenvswitchToMl2_Juno(BaseMigrateToMl2):
               INSERT INTO ml2_gre_allocations
                 SELECT tunnel_id as gre_id, allocated
                   FROM ovs_tunnel_allocations
-                  WHERE allocated = TRUE
+                  WHERE allocated = 1
             """)
             engine.execute("""
               INSERT INTO ml2_gre_endpoints
@@ -414,7 +403,7 @@ class MigrateOpenvswitchToMl2_Juno(BaseMigrateToMl2):
               INSERT INTO ml2_vxlan_allocations
                 SELECT tunnel_id as vxlan_vni, allocated
                   FROM ovs_tunnel_allocations
-                  WHERE allocated = TRUE
+                  WHERE allocated = 1
             """)
             engine.execute(sa.text("""
               INSERT INTO ml2_vxlan_endpoints
@@ -425,24 +414,10 @@ class MigrateOpenvswitchToMl2_Juno(BaseMigrateToMl2):
             raise ValueError(_('Unknown tunnel type: %s') % tunnel_type)
 
 
-class MigrateLinuxBridgeToMl2_Icehouse(MigrateLinuxBridgeToMl2_Juno,
-                                       BaseMigrateToMl2_IcehouseMixin):
-    pass
-
-
-class MigrateOpenvswitchToMl2_Icehouse(MigrateOpenvswitchToMl2_Juno,
-                                      BaseMigrateToMl2_IcehouseMixin):
-    pass
-
-
 migrate_map = {
     ICEHOUSE: {
         OPENVSWITCH: MigrateOpenvswitchToMl2_Icehouse,
         LINUXBRIDGE: MigrateLinuxBridgeToMl2_Icehouse,
-    },
-    JUNO: {
-        OPENVSWITCH: MigrateOpenvswitchToMl2_Juno,
-        LINUXBRIDGE: MigrateLinuxBridgeToMl2_Juno,
     },
 }
 
@@ -460,7 +435,7 @@ def main():
                         OPENVSWITCH)
     parser.add_argument('--vxlan-udp-port', default=None, type=int,
                         help=_('The UDP port to use for VXLAN tunnels.'))
-    parser.add_argument('--release', default=JUNO, choices=[ICEHOUSE, JUNO])
+    parser.add_argument('--release', default=ICEHOUSE, choices=[ICEHOUSE])
     parser.add_argument('--save-tables', default=False, action='store_true',
                         help=_("Retain the old plugin's tables"))
     #TODO(marun) Provide a verbose option

@@ -15,7 +15,7 @@
 
 import mock
 
-from neutron.openstack.common import jsonutils
+from neutron.openstack.common import jsonutils as json
 from neutron.plugins.oneconvergence.lib import nvsdlib
 from neutron.tests import base
 
@@ -65,11 +65,10 @@ class TestNVSDApi(base.BaseTestCase):
                                return_value=resp) as send_request:
             uri = NETWORKS_URI % TEST_TENANT
             net = self.nvsdlib.create_network(network_obj)
-            send_request.assert_called_once_with(
-                "POST", uri,
-                body=jsonutils.dumps(network_obj),
-                resource='network',
-                tenant_id=TEST_TENANT)
+            send_request.assert_called_once_with("POST", uri,
+                                                 body=json.dumps(network_obj),
+                                                 resource='network',
+                                                 tenant_id=TEST_TENANT)
             self.assertEqual(net, {'id': 'uuid'})
 
     def test_update_network(self):
@@ -80,7 +79,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.update_network(network, update_network)
             send_request.assert_called_once_with(
-                "PUT", uri, body=jsonutils.dumps(update_network),
+                "PUT", uri, body=json.dumps(update_network),
                 resource='network', tenant_id=TEST_TENANT,
                 resource_id=TEST_NET)
 
@@ -124,11 +123,10 @@ class TestNVSDApi(base.BaseTestCase):
                         "admin_state_up": True,
                         "network_id": TEST_NET,
                         "status": 'ACTIVE'}
-            send_request.assert_called_once_with(
-                "POST", path,
-                body=jsonutils.dumps(expected),
-                resource='port',
-                tenant_id=TEST_TENANT)
+            send_request.assert_called_once_with("POST", path,
+                                                 body=json.dumps(expected),
+                                                 resource='port',
+                                                 tenant_id=TEST_TENANT)
 
     def test_update_port(self):
         port = {'id': TEST_PORT,
@@ -139,12 +137,11 @@ class TestNVSDApi(base.BaseTestCase):
 
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.update_port(TEST_TENANT, port, port_update)
-            send_request.assert_called_once_with(
-                "PUT", uri,
-                body=jsonutils.dumps(port_update),
-                resource='port',
-                resource_id='test-port',
-                tenant_id=TEST_TENANT)
+            send_request.assert_called_once_with("PUT", uri,
+                                                 body=json.dumps(port_update),
+                                                 resource='port',
+                                                 resource_id='test-port',
+                                                 tenant_id=TEST_TENANT)
 
     def test_delete_port(self):
         port = {'network_id': TEST_NET,
@@ -167,7 +164,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.create_subnet(subnet)
             send_request.assert_called_once_with("POST", uri,
-                                                 body=jsonutils.dumps(subnet),
+                                                 body=json.dumps(subnet),
                                                  resource='subnet',
                                                  tenant_id=TEST_TENANT)
 
@@ -181,8 +178,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.update_subnet(subnet, subnet_update)
             send_request.assert_called_once_with(
-                "PUT", uri,
-                body=jsonutils.dumps(subnet_update), resource='subnet',
+                "PUT", uri, body=json.dumps(subnet_update), resource='subnet',
                 tenant_id=TEST_TENANT, resource_id=TEST_SUBNET)
 
     def test_delete_subnet(self):
@@ -205,11 +201,10 @@ class TestNVSDApi(base.BaseTestCase):
 
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.create_floatingip(floatingip)
-            send_request.assert_called_once_with(
-                "POST", uri,
-                body=jsonutils.dumps(floatingip),
-                resource='floating_ip',
-                tenant_id=TEST_TENANT)
+            send_request.assert_called_once_with("POST", uri,
+                                                 body=json.dumps(floatingip),
+                                                 resource='floating_ip',
+                                                 tenant_id=TEST_TENANT)
 
     def test_update_floatingip(self):
         floatingip = {'id': TEST_FIP,
@@ -220,8 +215,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.update_floatingip(floatingip, floatingip_update)
             send_request.assert_called_once_with(
-                "PUT", uri,
-                body=jsonutils.dumps(floatingip_update['floatingip']),
+                "PUT", uri, body=json.dumps(floatingip_update['floatingip']),
                 resource='floating_ip', tenant_id=TEST_TENANT,
                 resource_id=TEST_FIP)
 
@@ -243,7 +237,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.create_router(router)
             send_request.assert_called_once_with(
-                "POST", uri, body=jsonutils.dumps(router), resource='router',
+                "POST", uri, body=json.dumps(router), resource='router',
                 tenant_id=TEST_TENANT)
 
     def test_update_router(self):
@@ -253,7 +247,7 @@ class TestNVSDApi(base.BaseTestCase):
         with mock.patch.object(self.nvsdlib, 'send_request') as send_request:
             self.nvsdlib.update_router(router)
             send_request.assert_called_once_with(
-                "PUT", uri, body=jsonutils.dumps(router),
+                "PUT", uri, body=json.dumps(router),
                 resource='router', tenant_id=TEST_TENANT,
                 resource_id=TEST_ROUTER)
 

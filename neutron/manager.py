@@ -17,7 +17,7 @@ import weakref
 
 from oslo.config import cfg
 
-from neutron.common import rpc as n_rpc
+from neutron.common import legacy
 from neutron.common import utils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
@@ -30,7 +30,7 @@ from stevedore import driver
 LOG = logging.getLogger(__name__)
 
 
-class Manager(n_rpc.RpcCallback, periodic_task.PeriodicTasks):
+class Manager(periodic_task.PeriodicTasks):
 
     # Set RPC API version to 1.0 by default.
     RPC_API_VERSION = '1.0'
@@ -88,7 +88,7 @@ class NeutronManager(object):
     """Neutron's Manager class.
 
     Neutron's Manager class is responsible for parsing a config file and
-    instantiating the correct plugin that concretely implements
+    instantiating the correct plugin that concretely implement
     neutron_plugin_base class.
     The caller should make sure that NeutronManager is a singleton.
     """
@@ -112,6 +112,8 @@ class NeutronManager(object):
         LOG.info(_("Loading core plugin: %s"), plugin_provider)
         self.plugin = self._get_plugin_instance('neutron.core_plugins',
                                                 plugin_provider)
+        legacy.modernize_quantum_config(cfg.CONF)
+
         msg = validate_post_plugin_load()
         if msg:
             LOG.critical(msg)
@@ -144,8 +146,9 @@ class NeutronManager(object):
         LOG.debug(_("Loading services supported by the core plugin"))
 
         # supported service types are derived from supported extensions
-        for ext_alias in getattr(self.plugin,
-                                 "supported_extension_aliases", []):
+        if not hasattr(self.plugin, "supported_extension_aliases"):
+            return
+        for ext_alias in self.plugin.supported_extension_aliases:
             if ext_alias in constants.EXT_TO_SERVICE_MAPPING:
                 service_type = constants.EXT_TO_SERVICE_MAPPING[ext_alias]
                 self.service_plugins[service_type] = self.plugin
@@ -176,7 +179,7 @@ class NeutronManager(object):
             # for the same type is a fatal exception
             if plugin_inst.get_plugin_type() in self.service_plugins:
                 raise ValueError(_("Multiple plugins for service "
-                                   "%s were configured") %
+                                   "%s were configured"),
                                  plugin_inst.get_plugin_type())
 
             self.service_plugins[plugin_inst.get_plugin_type()] = plugin_inst

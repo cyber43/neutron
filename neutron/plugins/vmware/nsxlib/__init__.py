@@ -13,12 +13,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import json
+
 from neutron.common import exceptions as exception
-from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log
 from neutron.plugins.vmware.api_client import exception as api_exc
 from neutron.plugins.vmware.common import exceptions as nsx_exc
-from neutron import version
+from neutron.version import version_info
 
 HTTP_GET = "GET"
 HTTP_POST = "POST"
@@ -26,7 +27,7 @@ HTTP_DELETE = "DELETE"
 HTTP_PUT = "PUT"
 # Prefix to be used for all NSX API calls
 URI_PREFIX = "/ws.v1"
-NEUTRON_VERSION = version.version_info.release_string()
+NEUTRON_VERSION = version_info.release_string()
 
 LOG = log.getLogger(__name__)
 
@@ -56,10 +57,7 @@ def _build_uri_path(resource,
     params.append(relations and "relations=%s" % relations)
     params.append(types and "types=%s" % types)
     if filters:
-        sorted_filters = [
-            '%s=%s' % (k, filters[k]) for k in sorted(filters.keys())
-        ]
-        params.extend(sorted_filters)
+        params.extend(['%s=%s' % (k, v) for (k, v) in filters.iteritems()])
     uri_path = "%s/%s" % (URI_PREFIX, res_path)
     non_empty_params = [x for x in params if x is not None]
     if non_empty_params:
@@ -97,7 +95,7 @@ def do_request(*args, **kwargs):
     try:
         res = cluster.api_client.request(*args)
         if res:
-            return jsonutils.loads(res)
+            return json.loads(res)
     except api_exc.ResourceNotFound:
         raise exception.NotFound()
     except api_exc.ReadOnlyMode:
@@ -141,4 +139,4 @@ def mk_body(**kwargs):
     :param kwargs: the key/value pirs to be dumped into a json string.
     :returns: a json string.
     """
-    return jsonutils.dumps(kwargs, ensure_ascii=False)
+    return json.dumps(kwargs, ensure_ascii=False)

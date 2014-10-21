@@ -13,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mohammad Banikazemi, IBM Corp
 
 
 import mock
@@ -133,11 +135,3 @@ class TestSdnveApi(base.BaseTestCase):
             result = self.api.sdnve_check_and_create_tenant(
                 id, constants.TENANT_TYPE_OF)
             self.assertIsNone(result)
-
-    def test_process_request(self):
-        my_request = {'key_1': 'value_1', 'router:external': 'True',
-                      'key_2': 'value_2'}
-        expected = {'key_1': 'value_1', 'router_external': 'True',
-                    'key_2': 'value_2'}
-        result = self.api.process_request(my_request)
-        self.assertEqual(expected, result)

@@ -1,3 +1,4 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 # Copyright 2012 Big Switch Networks, Inc.
 # All Rights Reserved.
 #
@@ -12,6 +13,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mandeep Dhami, Big Switch Networks, Inc.
+# @author: Sumit Naiksatam, sumitnaiksatam@gmail.com, Big Switch Networks, Inc.
 
 """
 Neutron REST Proxy Plug-in for Big Switch and FloodLight Controllers.
@@ -52,11 +56,9 @@ from sqlalchemy.orm import exc as sqlexc
 from neutron.agent import securitygroups_rpc as sg_rpc
 from neutron.api import extensions as neutron_extensions
 from neutron.api.rpc.agentnotifiers import dhcp_rpc_agent_api
-from neutron.api.rpc.handlers import dhcp_rpc
-from neutron.api.rpc.handlers import securitygroups_rpc
 from neutron.common import constants as const
 from neutron.common import exceptions
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron.common import topics
 from neutron.common import utils
 from neutron import context as qcontext
@@ -65,25 +67,29 @@ from neutron.db import agentschedulers_db
 from neutron.db import allowedaddresspairs_db as addr_pair_db
 from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
+from neutron.db import dhcp_rpc_base
 from neutron.db import external_net_db
 from neutron.db import extradhcpopt_db
 from neutron.db import l3_db
 from neutron.db import models_v2
 from neutron.db import securitygroups_db as sg_db
-from neutron.db import securitygroups_rpc_base as sg_db_rpc
+from neutron.db import securitygroups_rpc_base as sg_rpc_base
 from neutron.extensions import allowedaddresspairs as addr_pair
 from neutron.extensions import external_net
 from neutron.extensions import extra_dhcp_opt as edo_ext
+from neutron.extensions import l3
 from neutron.extensions import portbindings
 from neutron import manager
+from neutron.openstack.common import excutils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import rpc
 from neutron.plugins.bigswitch import config as pl_config
 from neutron.plugins.bigswitch.db import porttracker_db
 from neutron.plugins.bigswitch import extensions
+from neutron.plugins.bigswitch import routerrule_db
 from neutron.plugins.bigswitch import servermanager
-from neutron.plugins.bigswitch import version
-from neutron.plugins.common import constants as pconst
+from neutron.plugins.bigswitch.version import version_string_with_vcs
 
 LOG = logging.getLogger(__name__)
 
@@ -91,7 +97,7 @@ SYNTAX_ERROR_MESSAGE = _('Syntax error in server config file, aborting plugin')
 METADATA_SERVER_IP = '169.254.169.254'
 
 
-class AgentNotifierApi(n_rpc.RpcProxy,
+class AgentNotifierApi(rpc.proxy.RpcProxy,
                        sg_rpc.SecurityGroupAgentRpcApiMixin):
 
     BASE_RPC_API_VERSION = '1.1'
@@ -109,10 +115,17 @@ class AgentNotifierApi(n_rpc.RpcProxy,
                          topic=self.topic_port_update)
 
 
-class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
+class RestProxyCallbacks(sg_rpc_base.SecurityGroupServerRpcCallbackMixin,
+                         dhcp_rpc_base.DhcpRpcCallbackMixin):
+
+    RPC_API_VERSION = '1.1'
+
+    def create_rpc_dispatcher(self):
+        return q_rpc.PluginRpcDispatcher([self,
+                                          agents_db.AgentExtRpcCallback()])
 
     def get_port_from_device(self, device):
-        port_id = re.sub(r"^%s" % const.TAP_DEVICE_PREFIX, "", device)
+        port_id = re.sub(r"^tap", "", device)
         port = self.get_port_and_sgs(port_id)
         if port:
             port['device'] = device
@@ -149,15 +162,11 @@ class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
 
 
 class NeutronRestProxyV2Base(db_base_plugin_v2.NeutronDbPluginV2,
-                             external_net_db.External_net_db_mixin):
+                             external_net_db.External_net_db_mixin,
+                             routerrule_db.RouterRule_db_mixin):
 
     supported_extension_aliases = ["binding"]
     servers = None
-
-    @property
-    def l3_plugin(self):
-        return manager.NeutronManager.get_service_plugins().get(
-            pconst.L3_ROUTER_NAT)
 
     def _get_all_data(self, get_ports=True, get_floating_ips=True,
                       get_routers=True):
@@ -195,9 +204,9 @@ class NeutronRestProxyV2Base(db_base_plugin_v2.NeutronDbPluginV2,
 
         data = {'networks': networks}
 
-        if get_routers and self.l3_plugin:
+        if get_routers:
             routers = []
-            all_routers = self.l3_plugin.get_routers(admin_context) or []
+            all_routers = self.get_routers(admin_context) or []
             for router in all_routers:
                 interfaces = []
                 mapped_router = self._map_state_and_status(router)
@@ -241,10 +250,9 @@ class NeutronRestProxyV2Base(db_base_plugin_v2.NeutronDbPluginV2,
 
         net_id = network['id']
         net_filter = {'floating_network_id': [net_id]}
-        if self.l3_plugin:
-            fl_ips = self.l3_plugin.get_floatingips(context,
-                                                    filters=net_filter) or []
-            network['floatingips'] = fl_ips
+        fl_ips = self.get_floatingips(context,
+                                      filters=net_filter) or []
+        network['floatingips'] = fl_ips
 
         return network
 
@@ -354,10 +362,8 @@ class NeutronRestProxyV2Base(db_base_plugin_v2.NeutronDbPluginV2,
         # In ML2, the host_id is already populated
         if portbindings.HOST_ID in port:
             hostid = port[portbindings.HOST_ID]
-        elif 'id' in port:
-            hostid = porttracker_db.get_port_hostid(context, port['id'])
         else:
-            hostid = None
+            hostid = porttracker_db.get_port_hostid(context, port['id'])
         if hostid:
             port[portbindings.HOST_ID] = hostid
             override = self._check_hostvif_override(hostid)
@@ -445,9 +451,7 @@ class NeutronRestProxyV2Base(db_base_plugin_v2.NeutronDbPluginV2,
 def put_context_in_serverpool(f):
     @functools.wraps(f)
     def wrapper(self, context, *args, **kwargs):
-        # core plugin: context is top level object
-        # ml2: keeps context in _plugin_context
-        self.servers.set_context(getattr(context, '_plugin_context', context))
+        self.servers.set_context(context)
         return f(self, context, *args, **kwargs)
     return wrapper
 
@@ -456,10 +460,10 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
                          addr_pair_db.AllowedAddressPairsMixin,
                          extradhcpopt_db.ExtraDhcpOptMixin,
                          agentschedulers_db.DhcpAgentSchedulerDbMixin,
-                         SecurityGroupServerRpcMixin):
+                         sg_rpc_base.SecurityGroupServerRpcMixin):
 
-    _supported_extension_aliases = ["external-net", "binding",
-                                    "extra_dhcp_opt", "quotas",
+    _supported_extension_aliases = ["external-net", "router", "binding",
+                                    "router_rules", "extra_dhcp_opt", "quotas",
                                     "dhcp_agent_scheduler", "agent",
                                     "security-group", "allowed-address-pairs"]
 
@@ -474,7 +478,7 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
     def __init__(self):
         super(NeutronRestProxyV2, self).__init__()
         LOG.info(_('NeutronRestProxy: Starting plugin. Version=%s'),
-                 version.version_string_with_vcs())
+                 version_string_with_vcs())
         pl_config.register_config()
         self.evpool = eventlet.GreenPool(cfg.CONF.RESTPROXY.thread_pool_size)
 
@@ -503,7 +507,7 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
         LOG.debug(_("NeutronRestProxyV2: initialization done"))
 
     def _setup_rpc(self):
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.topic = topics.PLUGIN
         self.notifier = AgentNotifierApi(topics.AGENT)
         # init dhcp agent support
@@ -511,13 +515,12 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
         self.agent_notifiers[const.AGENT_TYPE_DHCP] = (
             self._dhcp_agent_notifier
         )
-        self.endpoints = [securitygroups_rpc.SecurityGroupServerRpcCallback(),
-                          dhcp_rpc.DhcpRpcCallback(),
-                          agents_db.AgentExtRpcCallback()]
-        self.conn.create_consumer(self.topic, self.endpoints,
+        self.callbacks = RestProxyCallbacks()
+        self.dispatcher = self.callbacks.create_rpc_dispatcher()
+        self.conn.create_consumer(self.topic, self.dispatcher,
                                   fanout=False)
-        # Consume from all consumers in threads
-        self.conn.consume_in_threads()
+        # Consume from all consumers in a thread
+        self.conn.consume_in_thread()
 
     @put_context_in_serverpool
     def create_network(self, context, network):
@@ -619,8 +622,18 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
 
         # Validate args
         orig_net = super(NeutronRestProxyV2, self).get_network(context, net_id)
+
+        filter = {'network_id': [net_id]}
+        ports = self.get_ports(context, filters=filter)
+
+        # check if there are any tenant owned ports in-use
+        auto_delete_port_owners = db_base_plugin_v2.AUTO_DELETE_PORT_OWNERS
+        only_auto_del = all(p['device_owner'] in auto_delete_port_owners
+                            for p in ports)
+
+        if not only_auto_del:
+            raise exceptions.NetworkInUse(net_id=net_id)
         with context.session.begin(subtransactions=True):
-            self._process_l3_delete(context, net_id)
             ret_val = super(NeutronRestProxyV2, self).delete_network(context,
                                                                      net_id)
             self._send_delete_network(orig_net, context)
@@ -629,13 +642,13 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
     @put_context_in_serverpool
     def create_port(self, context, port):
         """Create a port, which is a connection point of a device
-        (e.g., a VM NIC) to attach an L2 Neutron network.
+        (e.g., a VM NIC) to attach to a L2 Neutron network.
         :param context: neutron api request context
         :param port: dictionary describing the port
 
         :returns:
         {
-            "id": uuid representing the port.
+            "id": uuid represeting the port.
             "network_id": uuid of network.
             "tenant_id": tenant_id
             "mac_address": mac address to use on this port.
@@ -643,7 +656,7 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
                               does not forward packets.
             "status": dicates whether port is currently operational
                       (limit values to "ACTIVE", "DOWN", "BUILD", and "ERROR")
-            "fixed_ips": list of subnet IDs and IP addresses to be used on
+            "fixed_ips": list of subnet ID"s and IP addresses to be used on
                          this port
             "device_id": identifies the device (e.g., virtual server) using
                          this port.
@@ -659,12 +672,8 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
         with context.session.begin(subtransactions=True):
             self._ensure_default_security_group_on_port(context, port)
             sgids = self._get_security_groups_on_port(context, port)
-            # non-router port status is set to pending. it is then updated
-            # after the async rest call completes. router ports are synchronous
-            if port['port']['device_owner'] == l3_db.DEVICE_OWNER_ROUTER_INTF:
-                port['port']['status'] = const.PORT_STATUS_ACTIVE
-            else:
-                port['port']['status'] = const.PORT_STATUS_BUILD
+            # set port status to pending. updated after rest call completes
+            port['port']['status'] = const.PORT_STATUS_BUILD
             dhcp_opts = port['port'].get(edo_ext.EXTRADHCPOPTS, [])
             new_port = super(NeutronRestProxyV2, self).create_port(context,
                                                                    port)
@@ -690,15 +699,8 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
 
         # create on network ctrl
         mapped_port = self._map_state_and_status(new_port)
-        # ports have to be created synchronously when creating a router
-        # port since adding router interfaces is a multi-call process
-        if mapped_port['device_owner'] == l3_db.DEVICE_OWNER_ROUTER_INTF:
-            self.servers.rest_create_port(net["tenant_id"],
-                                          new_port["network_id"],
-                                          mapped_port)
-        else:
-            self.evpool.spawn_n(self.async_port_create, net["tenant_id"],
-                                new_port["network_id"], mapped_port)
+        self.evpool.spawn_n(self.async_port_create, net["tenant_id"],
+                            new_port["network_id"], mapped_port)
         self.notify_security_groups_member_updated(context, new_port)
         return new_port
 
@@ -727,7 +729,7 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
 
         :returns: a mapping sequence with the following signature:
         {
-            "id": uuid representing the port.
+            "id": uuid represeting the port.
             "network_id": uuid of network.
             "tenant_id": tenant_id
             "mac_address": mac address to use on this port.
@@ -735,7 +737,7 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
                                does not forward packets.
             "status": dicates whether port is currently operational
                        (limit values to "ACTIVE", "DOWN", "BUILD", and "ERROR")
-            "fixed_ips": list of subnet IDs and IP addresses to be used on
+            "fixed_ips": list of subnet ID's and IP addresses to be used on
                          this port
             "device_id": identifies the device (e.g., virtual server) using
                          this port.
@@ -760,6 +762,9 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
                 ctrl_update_required |= (
                     self.update_address_pairs_on_port(context, port_id, port,
                                                       orig_port, new_port))
+            if 'fixed_ips' in port['port']:
+                self._check_fixed_ips_and_address_pairs_no_overlap(
+                    context, new_port)
             self._update_extra_dhcp_opts_on_port(context, port_id, port,
                                                  new_port)
             old_host_id = porttracker_db.get_port_hostid(context,
@@ -809,12 +814,11 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
 
         # if needed, check to see if this is a port owned by
         # and l3-router.  If so, we should prevent deletion.
-        if l3_port_check and self.l3_plugin:
-            self.l3_plugin.prevent_l3_port_deletion(context, port_id)
+        if l3_port_check:
+            self.prevent_l3_port_deletion(context, port_id)
         with context.session.begin(subtransactions=True):
-            if self.l3_plugin:
-                router_ids = self.l3_plugin.disassociate_floatingips(
-                    context, port_id, do_notify=False)
+            router_ids = self.disassociate_floatingips(
+                context, port_id, do_notify=False)
             self._delete_port_security_group_bindings(context, port_id)
             port = super(NeutronRestProxyV2, self).get_port(context, port_id)
             # Tenant ID must come from network in case the network is shared
@@ -822,9 +826,8 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
             self._delete_port(context, port_id)
             self.servers.rest_delete_port(tenid, port['network_id'], port_id)
 
-        if self.l3_plugin:
-            # now that we've left db transaction, we are safe to notify
-            self.l3_plugin.notify_routers_updated(context, router_ids)
+        # now that we've left db transaction, we are safe to notify
+        self.notify_routers_updated(context, router_ids)
 
     @put_context_in_serverpool
     def create_subnet(self, context, subnet):
@@ -874,6 +877,251 @@ class NeutronRestProxyV2(NeutronRestProxyV2Base,
                                                                    net_id)
             # update network on network controller - exception will rollback
             self._send_update_network(orig_net, context)
+
+    def _get_tenant_default_router_rules(self, tenant):
+        rules = cfg.CONF.ROUTER.tenant_default_router_rule
+        defaultset = []
+        tenantset = []
+        for rule in rules:
+            items = rule.split(':')
+            if len(items) == 5:
+                (tenantid, source, destination, action, nexthops) = items
+            elif len(items) == 4:
+                (tenantid, source, destination, action) = items
+                nexthops = ''
+            else:
+                continue
+            parsedrule = {'source': source,
+                          'destination': destination, 'action': action,
+                          'nexthops': nexthops.split(',')}
+            if parsedrule['nexthops'][0] == '':
+                parsedrule['nexthops'] = []
+            if tenantid == '*':
+                defaultset.append(parsedrule)
+            if tenantid == tenant:
+                tenantset.append(parsedrule)
+        if tenantset:
+            return tenantset
+        return defaultset
+
+    @put_context_in_serverpool
+    def create_router(self, context, router):
+        LOG.debug(_("NeutronRestProxyV2: create_router() called"))
+
+        self._warn_on_state_status(router['router'])
+
+        tenant_id = self._get_tenant_id_for_create(context, router["router"])
+
+        # set default router rules
+        rules = self._get_tenant_default_router_rules(tenant_id)
+        router['router']['router_rules'] = rules
+
+        with context.session.begin(subtransactions=True):
+            # create router in DB
+            new_router = super(NeutronRestProxyV2, self).create_router(context,
+                                                                       router)
+            mapped_router = self._map_state_and_status(new_router)
+            self.servers.rest_create_router(tenant_id, mapped_router)
+
+            # return created router
+            return new_router
+
+    @put_context_in_serverpool
+    def update_router(self, context, router_id, router):
+
+        LOG.debug(_("NeutronRestProxyV2.update_router() called"))
+
+        self._warn_on_state_status(router['router'])
+
+        orig_router = super(NeutronRestProxyV2, self).get_router(context,
+                                                                 router_id)
+        tenant_id = orig_router["tenant_id"]
+        with context.session.begin(subtransactions=True):
+            new_router = super(NeutronRestProxyV2,
+                               self).update_router(context, router_id, router)
+            router = self._map_state_and_status(new_router)
+
+            # update router on network controller
+            self.servers.rest_update_router(tenant_id, router, router_id)
+
+            # return updated router
+            return new_router
+
+    # NOTE(kevinbenton): workaround for eventlet/mysql deadlock.
+    # delete_router ends up calling _delete_port instead of delete_port.
+    @utils.synchronized('bsn-port-barrier')
+    @put_context_in_serverpool
+    def delete_router(self, context, router_id):
+        LOG.debug(_("NeutronRestProxyV2: delete_router() called"))
+
+        with context.session.begin(subtransactions=True):
+            orig_router = self._get_router(context, router_id)
+            tenant_id = orig_router["tenant_id"]
+
+            # Ensure that the router is not used
+            router_filter = {'router_id': [router_id]}
+            fips = self.get_floatingips_count(context.elevated(),
+                                              filters=router_filter)
+            if fips:
+                raise l3.RouterInUse(router_id=router_id)
+
+            device_owner = l3_db.DEVICE_OWNER_ROUTER_INTF
+            device_filter = {'device_id': [router_id],
+                             'device_owner': [device_owner]}
+            ports = self.get_ports_count(context.elevated(),
+                                         filters=device_filter)
+            if ports:
+                raise l3.RouterInUse(router_id=router_id)
+            ret_val = super(NeutronRestProxyV2,
+                            self).delete_router(context, router_id)
+
+            # delete from network ctrl
+            self.servers.rest_delete_router(tenant_id, router_id)
+            return ret_val
+
+    @put_context_in_serverpool
+    def add_router_interface(self, context, router_id, interface_info):
+
+        LOG.debug(_("NeutronRestProxyV2: add_router_interface() called"))
+
+        # Validate args
+        router = self._get_router(context, router_id)
+        tenant_id = router['tenant_id']
+
+        with context.session.begin(subtransactions=True):
+            # create interface in DB
+            new_intf_info = super(NeutronRestProxyV2,
+                                  self).add_router_interface(context,
+                                                             router_id,
+                                                             interface_info)
+            port = self._get_port(context, new_intf_info['port_id'])
+            net_id = port['network_id']
+            subnet_id = new_intf_info['subnet_id']
+            # we will use the port's network id as interface's id
+            interface_id = net_id
+            intf_details = self._get_router_intf_details(context,
+                                                         interface_id,
+                                                         subnet_id)
+
+            # create interface on the network controller
+            self.servers.rest_add_router_interface(tenant_id, router_id,
+                                                   intf_details)
+            return new_intf_info
+
+    @put_context_in_serverpool
+    def remove_router_interface(self, context, router_id, interface_info):
+
+        LOG.debug(_("NeutronRestProxyV2: remove_router_interface() called"))
+
+        # Validate args
+        router = self._get_router(context, router_id)
+        tenant_id = router['tenant_id']
+
+        # we will first get the interface identifier before deleting in the DB
+        if not interface_info:
+            msg = _("Either subnet_id or port_id must be specified")
+            raise exceptions.BadRequest(resource='router', msg=msg)
+        if 'port_id' in interface_info:
+            port = self._get_port(context, interface_info['port_id'])
+            interface_id = port['network_id']
+        elif 'subnet_id' in interface_info:
+            subnet = self._get_subnet(context, interface_info['subnet_id'])
+            interface_id = subnet['network_id']
+        else:
+            msg = _("Either subnet_id or port_id must be specified")
+            raise exceptions.BadRequest(resource='router', msg=msg)
+
+        with context.session.begin(subtransactions=True):
+            # remove router in DB
+            del_ret = super(NeutronRestProxyV2,
+                            self).remove_router_interface(context,
+                                                          router_id,
+                                                          interface_info)
+
+            # create router on the network controller
+            self.servers.rest_remove_router_interface(tenant_id, router_id,
+                                                      interface_id)
+            return del_ret
+
+    @put_context_in_serverpool
+    def create_floatingip(self, context, floatingip):
+        LOG.debug(_("NeutronRestProxyV2: create_floatingip() called"))
+
+        with context.session.begin(subtransactions=True):
+            # create floatingip in DB
+            new_fl_ip = super(NeutronRestProxyV2,
+                              self).create_floatingip(context, floatingip)
+
+            # create floatingip on the network controller
+            try:
+                if 'floatingip' in self.servers.get_capabilities():
+                    self.servers.rest_create_floatingip(
+                        new_fl_ip['tenant_id'], new_fl_ip)
+                else:
+                    self._send_floatingip_update(context)
+            except servermanager.RemoteRestError as e:
+                with excutils.save_and_reraise_exception():
+                    LOG.error(
+                        _("NeutronRestProxyV2: Unable to create remote "
+                          "floating IP: %s"), e)
+            # return created floating IP
+            return new_fl_ip
+
+    @put_context_in_serverpool
+    def update_floatingip(self, context, id, floatingip):
+        LOG.debug(_("NeutronRestProxyV2: update_floatingip() called"))
+
+        with context.session.begin(subtransactions=True):
+            # update floatingip in DB
+            new_fl_ip = super(NeutronRestProxyV2,
+                              self).update_floatingip(context, id, floatingip)
+
+            # update network on network controller
+            if 'floatingip' in self.servers.get_capabilities():
+                self.servers.rest_update_floatingip(new_fl_ip['tenant_id'],
+                                                    new_fl_ip, id)
+            else:
+                self._send_floatingip_update(context)
+            return new_fl_ip
+
+    @put_context_in_serverpool
+    def delete_floatingip(self, context, id):
+        LOG.debug(_("NeutronRestProxyV2: delete_floatingip() called"))
+
+        with context.session.begin(subtransactions=True):
+            # delete floating IP in DB
+            old_fip = super(NeutronRestProxyV2, self).get_floatingip(context,
+                                                                     id)
+            super(NeutronRestProxyV2, self).delete_floatingip(context, id)
+
+            # update network on network controller
+            if 'floatingip' in self.servers.get_capabilities():
+                self.servers.rest_delete_floatingip(old_fip['tenant_id'], id)
+            else:
+                self._send_floatingip_update(context)
+
+    @put_context_in_serverpool
+    def disassociate_floatingips(self, context, port_id, do_notify=True):
+        LOG.debug(_("NeutronRestProxyV2: diassociate_floatingips() called"))
+        router_ids = super(NeutronRestProxyV2, self).disassociate_floatingips(
+            context, port_id, do_notify=do_notify)
+        self._send_floatingip_update(context)
+        return router_ids
+
+    def _send_floatingip_update(self, context):
+        try:
+            ext_net_id = self.get_external_network_id(context)
+            if ext_net_id:
+                # Use the elevated state of the context for the ext_net query
+                admin_context = context.elevated()
+                ext_net = super(NeutronRestProxyV2,
+                                self).get_network(admin_context, ext_net_id)
+                # update external network on network controller
+                self._send_update_network(ext_net, admin_context)
+        except exceptions.TooManyExternalNetworks:
+            # get_external_network can raise errors when multiple external
+            # networks are detected, which isn't supported by the Plugin
+            LOG.error(_("NeutronRestProxyV2: too many external networks"))
 
     def _add_host_route(self, context, destination, port):
         subnet = {}

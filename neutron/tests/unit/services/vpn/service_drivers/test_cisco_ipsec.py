@@ -13,219 +13,167 @@
 #    under the License.
 
 import mock
-from oslo.config import cfg
+
 
 from neutron import context as n_ctx
-from neutron.db import servicetype_db as st_db
+from neutron.db import api as dbapi
 from neutron.openstack.common import uuidutils
 from neutron.plugins.common import constants
-from neutron.services.vpn import plugin as vpn_plugin
 from neutron.services.vpn.service_drivers import cisco_csr_db as csr_db
 from neutron.services.vpn.service_drivers import cisco_ipsec as ipsec_driver
-from neutron.services.vpn.service_drivers import cisco_validator as validator
 from neutron.tests import base
-from neutron.tests.unit import testlib_api
 
 _uuid = uuidutils.generate_uuid
 
 FAKE_VPN_CONN_ID = _uuid()
-FAKE_SERVICE_ID = _uuid()
+
 FAKE_VPN_CONNECTION = {
-    'vpnservice_id': FAKE_SERVICE_ID,
+    'vpnservice_id': _uuid(),
     'id': FAKE_VPN_CONN_ID,
     'ikepolicy_id': _uuid(),
     'ipsecpolicy_id': _uuid(),
     'tenant_id': _uuid()
 }
-
-FAKE_ROUTER_ID = _uuid()
 FAKE_VPN_SERVICE = {
-    'router_id': FAKE_ROUTER_ID
+    'router_id': _uuid()
 }
-
 FAKE_HOST = 'fake_host'
-IPV4 = 4
-
-CISCO_IPSEC_SERVICE_DRIVER = ('neutron.services.vpn.service_drivers.'
-                              'cisco_ipsec.CiscoCsrIPsecVPNDriver')
-
-
-class TestCiscoValidatorSelection(base.BaseTestCase):
-
-    def setUp(self):
-        super(TestCiscoValidatorSelection, self).setUp()
-        vpnaas_provider = (constants.VPN + ':vpnaas:' +
-                           CISCO_IPSEC_SERVICE_DRIVER + ':default')
-        cfg.CONF.set_override('service_provider',
-                              [vpnaas_provider],
-                              'service_providers')
-        stm = st_db.ServiceTypeManager()
-        mock.patch('neutron.db.servicetype_db.ServiceTypeManager.get_instance',
-                   return_value=stm).start()
-        mock.patch('neutron.common.rpc.create_connection').start()
-        self.vpn_plugin = vpn_plugin.VPNDriverPlugin()
-
-    def test_reference_driver_used(self):
-        self.assertIsInstance(self.vpn_plugin._get_validator(),
-                              validator.CiscoCsrVpnValidator)
 
 
 class TestCiscoIPsecDriverValidation(base.BaseTestCase):
 
     def setUp(self):
         super(TestCiscoIPsecDriverValidation, self).setUp()
-        mock.patch('neutron.common.rpc.create_connection').start()
-        self.l3_plugin = mock.Mock()
-        mock.patch(
-            'neutron.manager.NeutronManager.get_service_plugins',
-            return_value={constants.L3_ROUTER_NAT: self.l3_plugin}).start()
-        self.core_plugin = mock.Mock()
-        mock.patch('neutron.manager.NeutronManager.get_plugin',
-                   return_value=self.core_plugin).start()
-        self.context = n_ctx.Context('some_user', 'some_tenant')
-        self.vpn_service = {'router_id': '123'}
-        self.router = mock.Mock()
+        mock.patch('neutron.openstack.common.rpc.create_connection').start()
         self.service_plugin = mock.Mock()
-        self.validator = validator.CiscoCsrVpnValidator(self.service_plugin)
+        self.driver = ipsec_driver.CiscoCsrIPsecVPNDriver(self.service_plugin)
+        self.context = n_ctx.Context('some_user', 'some_tenant')
+        self.vpn_service = mock.Mock()
 
     def test_ike_version_unsupported(self):
         """Failure test that Cisco CSR REST API does not support IKE v2."""
         policy_info = {'ike_version': 'v2',
                        'lifetime': {'units': 'seconds', 'value': 60}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_ike_version,
-                          policy_info)
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_ike_version, policy_info)
 
     def test_ike_lifetime_not_in_seconds(self):
         """Failure test of unsupported lifetime units for IKE policy."""
         policy_info = {'lifetime': {'units': 'kilobytes', 'value': 1000}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           "IKE Policy", policy_info)
 
     def test_ipsec_lifetime_not_in_seconds(self):
         """Failure test of unsupported lifetime units for IPSec policy."""
         policy_info = {'lifetime': {'units': 'kilobytes', 'value': 1000}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           "IPSec Policy", policy_info)
 
     def test_ike_lifetime_seconds_values_at_limits(self):
         """Test valid lifetime values for IKE policy."""
         policy_info = {'lifetime': {'units': 'seconds', 'value': 60}}
-        self.validator.validate_lifetime('IKE Policy', policy_info)
+        self.driver.validate_lifetime('IKE Policy', policy_info)
         policy_info = {'lifetime': {'units': 'seconds', 'value': 86400}}
-        self.validator.validate_lifetime('IKE Policy', policy_info)
+        self.driver.validate_lifetime('IKE Policy', policy_info)
 
     def test_ipsec_lifetime_seconds_values_at_limits(self):
         """Test valid lifetime values for IPSec policy."""
         policy_info = {'lifetime': {'units': 'seconds', 'value': 120}}
-        self.validator.validate_lifetime('IPSec Policy', policy_info)
+        self.driver.validate_lifetime('IPSec Policy', policy_info)
         policy_info = {'lifetime': {'units': 'seconds', 'value': 2592000}}
-        self.validator.validate_lifetime('IPSec Policy', policy_info)
+        self.driver.validate_lifetime('IPSec Policy', policy_info)
 
     def test_ike_lifetime_values_invalid(self):
         """Failure test of unsupported lifetime values for IKE policy."""
         which = "IKE Policy"
         policy_info = {'lifetime': {'units': 'seconds', 'value': 59}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           which, policy_info)
         policy_info = {'lifetime': {'units': 'seconds', 'value': 86401}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           which, policy_info)
 
     def test_ipsec_lifetime_values_invalid(self):
         """Failure test of unsupported lifetime values for IPSec policy."""
         which = "IPSec Policy"
         policy_info = {'lifetime': {'units': 'seconds', 'value': 119}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           which, policy_info)
         policy_info = {'lifetime': {'units': 'seconds', 'value': 2592001}}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_lifetime,
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_lifetime,
                           which, policy_info)
 
     def test_ipsec_connection_with_mtu_at_limits(self):
         """Test IPSec site-to-site connection with MTU at limits."""
         conn_info = {'mtu': 1500}
-        self.validator.validate_mtu(conn_info)
+        self.driver.validate_mtu(conn_info)
         conn_info = {'mtu': 9192}
-        self.validator.validate_mtu(conn_info)
+        self.driver.validate_mtu(conn_info)
 
     def test_ipsec_connection_with_invalid_mtu(self):
         """Failure test of IPSec site connection with unsupported MTUs."""
         conn_info = {'mtu': 1499}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_mtu, conn_info)
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_mtu, conn_info)
         conn_info = {'mtu': 9193}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_mtu, conn_info)
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_mtu, conn_info)
 
     def simulate_gw_ip_available(self):
         """Helper function indicating that tunnel has a gateway IP."""
         def have_one():
             return 1
-        self.router.gw_port.fixed_ips.__len__ = have_one
+        self.vpn_service.router.gw_port.fixed_ips.__len__ = have_one
         ip_addr_mock = mock.Mock()
-        self.router.gw_port.fixed_ips = [ip_addr_mock]
+        self.vpn_service.router.gw_port.fixed_ips = [ip_addr_mock]
+        return ip_addr_mock
 
     def test_have_public_ip_for_router(self):
         """Ensure that router for IPSec connection has gateway IP."""
         self.simulate_gw_ip_available()
-        try:
-            self.validator.validate_public_ip_present(self.router)
-        except Exception:
-            self.fail("Unexpected exception on validation")
+        self.driver.validate_public_ip_present(self.vpn_service)
 
     def test_router_with_missing_gateway_ip(self):
         """Failure test of IPSec connection with missing gateway IP."""
         self.simulate_gw_ip_available()
-        self.router.gw_port = None
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_public_ip_present,
-                          self.router)
+        self.vpn_service.router.gw_port = None
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_public_ip_present,
+                          self.vpn_service)
 
     def test_peer_id_is_an_ip_address(self):
         """Ensure peer ID is an IP address for IPsec connection create."""
-        ipsec_sitecon = {'peer_id': '10.10.10.10'}
-        self.validator.validate_peer_id(ipsec_sitecon)
+        ipsec_conn = {'peer_id': '10.10.10.10'}
+        self.driver.validate_peer_id(ipsec_conn)
 
     def test_peer_id_is_not_ip_address(self):
         """Failure test of peer_id that is not an IP address."""
-        ipsec_sitecon = {'peer_id': 'some-site.com'}
-        self.assertRaises(validator.CsrValidationFailure,
-                          self.validator.validate_peer_id, ipsec_sitecon)
+        ipsec_conn = {'peer_id': 'some-site.com'}
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.validate_peer_id, ipsec_conn)
 
     def test_validation_for_create_ipsec_connection(self):
         """Ensure all validation passes for IPSec site connection create."""
         self.simulate_gw_ip_available()
+        # Provide the minimum needed items to validate
+        ipsec_conn = {'id': '1',
+                      'ikepolicy_id': '123',
+                      'ipsecpolicy_id': '2',
+                      'mtu': 1500,
+                      'peer_id': '10.10.10.10'}
         self.service_plugin.get_ikepolicy = mock.Mock(
             return_value={'ike_version': 'v1',
                           'lifetime': {'units': 'seconds', 'value': 60}})
         self.service_plugin.get_ipsecpolicy = mock.Mock(
             return_value={'lifetime': {'units': 'seconds', 'value': 120}})
-        self.service_plugin.get_vpnservice = mock.Mock(
-            return_value=self.vpn_service)
-        self.l3_plugin._get_router = mock.Mock(return_value=self.router)
-        # Provide the minimum needed items to validate
-        ipsec_sitecon = {'id': '1',
-                         'vpnservice_id': FAKE_SERVICE_ID,
-                         'ikepolicy_id': '123',
-                         'ipsecpolicy_id': '2',
-                         'mtu': 1500,
-                         'peer_id': '10.10.10.10'}
-        # Using defaults for DPD info
-        expected = {'dpd_action': 'hold',
-                    'dpd_interval': 30,
-                    'dpd_timeout': 120}
-        expected.update(ipsec_sitecon)
-        self.validator.assign_sensible_ipsec_sitecon_defaults(ipsec_sitecon)
-        self.validator.validate_ipsec_site_connection(self.context,
-                                                      ipsec_sitecon, IPV4)
-        self.assertEqual(expected, ipsec_sitecon)
+        self.driver.validate_ipsec_connection(self.context, ipsec_conn,
+                                              self.vpn_service)
 
 
 class TestCiscoIPsecDriverMapping(base.BaseTestCase):
@@ -328,37 +276,45 @@ class TestCiscoIPsecDriverMapping(base.BaseTestCase):
                                             tenant_id='1000')
 
 
-class TestCiscoIPsecDriver(testlib_api.SqlTestCase):
+class TestCiscoIPsecDriver(base.BaseTestCase):
 
     """Test that various incoming requests are sent to device driver."""
 
     def setUp(self):
         super(TestCiscoIPsecDriver, self).setUp()
-        mock.patch('neutron.common.rpc.create_connection').start()
+        dbapi.configure_db()
+        self.addCleanup(dbapi.clear_db)
+        mock.patch('neutron.openstack.common.rpc.create_connection').start()
+
+        l3_agent = mock.Mock()
+        l3_agent.host = FAKE_HOST
+        plugin = mock.Mock()
+        plugin.get_l3_agents_hosting_routers.return_value = [l3_agent]
+        plugin_p = mock.patch('neutron.manager.NeutronManager.get_plugin')
+        get_plugin = plugin_p.start()
+        get_plugin.return_value = plugin
+        service_plugin_p = mock.patch(
+            'neutron.manager.NeutronManager.get_service_plugins')
+        get_service_plugin = service_plugin_p.start()
+        get_service_plugin.return_value = {constants.L3_ROUTER_NAT: plugin}
 
         service_plugin = mock.Mock()
-        service_plugin.get_host_for_router.return_value = FAKE_HOST
-        # TODO(pcm): Remove when Cisco L3 router plugin support available
-        mock.patch('neutron.services.vpn.service_drivers.'
-                   'cisco_cfg_loader.get_host_for_router',
-                   return_value=FAKE_HOST).start()
+        service_plugin.get_l3_agents_hosting_routers.return_value = [l3_agent]
         service_plugin._get_vpnservice.return_value = {
             'router_id': _uuid()
         }
-        get_service_plugin = mock.patch(
-            'neutron.manager.NeutronManager.get_service_plugins').start()
-        get_service_plugin.return_value = {
-            constants.L3_ROUTER_NAT: service_plugin}
+        self.db_update_mock = service_plugin.update_ipsec_site_conn_status
         self.driver = ipsec_driver.CiscoCsrIPsecVPNDriver(service_plugin)
+        self.driver.validate_ipsec_connection = mock.Mock()
         mock.patch.object(csr_db, 'create_tunnel_mapping').start()
         self.context = n_ctx.Context('some_user', 'some_tenant')
 
-    def _test_update(self, func, args, additional_info=None):
+    def _test_update(self, func, args, reason=None):
         with mock.patch.object(self.driver.agent_rpc, 'cast') as cast:
             func(self.context, *args)
             cast.assert_called_once_with(
                 self.context,
-                {'args': additional_info,
+                {'args': reason,
                  'namespace': None,
                  'method': 'vpnservice_updated'},
                 version='1.0',
@@ -369,10 +325,31 @@ class TestCiscoIPsecDriver(testlib_api.SqlTestCase):
                           [FAKE_VPN_CONNECTION],
                           {'reason': 'ipsec-conn-create'})
 
+    def test_failure_validation_ipsec_connection(self):
+        """Failure test of validation during IPSec site connection create.
+
+        Simulate a validation failure, and ensure that database is
+        updated to indicate connection is in error state.
+
+        TODO(pcm): FUTURE - remove test case, once vendor plugin
+        validation is done before database commit.
+        """
+        self.driver.validate_ipsec_connection.side_effect = (
+            ipsec_driver.CsrValidationFailure(resource='IPSec Connection',
+                                              key='mtu', value=1000))
+        self.assertRaises(ipsec_driver.CsrValidationFailure,
+                          self.driver.create_ipsec_site_connection,
+                          self.context, FAKE_VPN_CONNECTION)
+        self.db_update_mock.assert_called_with(self.context,
+                                               FAKE_VPN_CONN_ID,
+                                               constants.ERROR)
+
     def test_update_ipsec_site_connection(self):
-        self._test_update(self.driver.update_ipsec_site_connection,
-                          [FAKE_VPN_CONNECTION, FAKE_VPN_CONNECTION],
-                          {'reason': 'ipsec-conn-update'})
+        # TODO(pcm) FUTURE - Update test, when supported
+        self.assertRaises(ipsec_driver.CsrUnsupportedError,
+                          self._test_update,
+                          self.driver.update_ipsec_site_connection,
+                          [FAKE_VPN_CONNECTION, FAKE_VPN_CONNECTION])
 
     def test_delete_ipsec_site_connection(self):
         self._test_update(self.driver.delete_ipsec_site_connection,

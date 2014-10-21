@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,40 +19,82 @@ Tests in this module will be skipped unless:
 
  - ovsdb-client is installed
 
- - ovsdb-client can be invoked password-less via the configured root helper
+ - ovsdb-client can be invoked via password-less sudo
 
- - sudo testing is enabled (see neutron.tests.functional.base for details)
+ - OS_SUDO_TESTING is set to '1' or 'True' in the test execution
+   environment
+
+
+The jenkins gate does not allow direct sudo invocation during test
+runs, but configuring OS_SUDO_TESTING ensures that developers are
+still able to execute tests that require the capability.
 """
+
+import os
+import random
 
 import eventlet
 
+from neutron.agent.linux import ovs_lib
 from neutron.agent.linux import ovsdb_monitor
-from neutron.tests.functional.agent.linux import base as linux_base
-from neutron.tests.functional import base as functional_base
+from neutron.agent.linux import utils
+from neutron.tests import base
 
 
-class BaseMonitorTest(linux_base.BaseOVSLinuxTestCase):
+def get_rand_name(name='test'):
+    return name + str(random.randint(1, 0x7fffffff))
+
+
+def create_ovs_resource(name_prefix, creation_func):
+    """Create a new ovs resource that does not already exist.
+
+    :param name_prefix: The prefix for a randomly generated name
+    :param creation_func: A function taking the name of the resource
+           to be created.  An error is assumed to indicate a name
+           collision.
+    """
+    while True:
+        name = get_rand_name(name_prefix)
+        try:
+            return creation_func(name)
+        except RuntimeError:
+            continue
+        break
+
+
+class BaseMonitorTest(base.BaseTestCase):
 
     def setUp(self):
         super(BaseMonitorTest, self).setUp()
 
-        rootwrap_not_configured = (self.root_helper ==
-                                   functional_base.SUDO_CMD)
-        if rootwrap_not_configured:
-            # The monitor tests require a nested invocation that has
-            # to be emulated by double sudo if rootwrap is not
-            # configured.
-            self.root_helper = '%s %s' % (self.root_helper, self.root_helper)
-
         self._check_test_requirements()
-        self.bridge = self.create_ovs_bridge()
+
+        # Emulate using a rootwrap script with sudo
+        self.root_helper = 'sudo sudo'
+        self.ovs = ovs_lib.BaseOVS(self.root_helper)
+        self.bridge = create_ovs_resource('test-br-', self.ovs.add_bridge)
+
+        def cleanup_bridge():
+            self.bridge.destroy()
+        self.addCleanup(cleanup_bridge)
+
+    def _check_command(self, cmd, error_text, skip_msg):
+        try:
+            utils.execute(cmd)
+        except RuntimeError as e:
+            if error_text in str(e):
+                self.skipTest(skip_msg)
+            raise
 
     def _check_test_requirements(self):
-        self.check_sudo_enabled()
-        self.check_command(['ovsdb-client', 'list-dbs'],
-                           'Exit code: 1',
-                           'password-less sudo not granted for ovsdb-client',
-                           root_helper=self.root_helper)
+        if os.environ.get('OS_SUDO_TESTING') not in base.TRUE_STRING:
+            self.skipTest('testing with sudo is not enabled')
+        self._check_command(['which', 'ovsdb-client'],
+                            'Exit code: 1',
+                            'ovsdb-client is not installed')
+        self._check_command(['sudo', '-n', 'ovsdb-client', 'list-dbs'],
+                            'Exit code: 1',
+                            'password-less sudo not granted for ovsdb-client')
 
 
 class TestOvsdbMonitor(BaseMonitorTest):
@@ -96,14 +140,14 @@ class TestSimpleInterfaceMonitor(BaseMonitorTest):
         self.monitor = ovsdb_monitor.SimpleInterfaceMonitor(
             root_helper=self.root_helper)
         self.addCleanup(self.monitor.stop)
-        self.monitor.start(block=True, timeout=60)
+        self.monitor.start(block=True)
 
     def test_has_updates(self):
         self.assertTrue(self.monitor.has_updates,
                         'Initial call should always be true')
         self.assertFalse(self.monitor.has_updates,
                          'has_updates without port addition should be False')
-        self.create_resource('test-port-', self.bridge.add_port)
+        create_ovs_resource('test-port-', self.bridge.add_port)
         with self.assert_max_execution_time():
             # has_updates after port addition should become True
             while not self.monitor.has_updates:

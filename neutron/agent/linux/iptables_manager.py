@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 Locaweb.
 # All Rights Reserved.
 #
@@ -13,22 +15,17 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 #
+# @author: Juliano Martinez, Locaweb.
 # based on
-# https://github.com/openstack/nova/blob/master/nova/network/linux_net.py
+#   https://github.com/openstack/nova/blob/master/nova/network/linux_net.py
 
 """Implements iptables rules using linux utilities."""
 
 import inspect
 import os
-import re
 
-from oslo.config import cfg
-
-from neutron.agent.common import config
-from neutron.agent.linux import iptables_comments as ic
 from neutron.agent.linux import utils as linux_utils
 from neutron.common import utils
-from neutron.openstack.common import excutils
 from neutron.openstack.common import lockutils
 from neutron.openstack.common import log as logging
 
@@ -50,16 +47,6 @@ binary_name = get_binary_name()
 MAX_CHAIN_LEN_WRAP = 11
 MAX_CHAIN_LEN_NOWRAP = 28
 
-# Number of iptables rules to print before and after a rule that causes a
-# a failure during iptables-restore
-IPTABLES_ERROR_LINES_OF_CONTEXT = 5
-
-
-def comment_rule(rule, comment):
-    if not cfg.CONF.AGENT.comment_iptables_rules or not comment:
-        return rule
-    return '%s -m comment --comment "%s"' % (rule, comment)
-
 
 def get_chain_name(chain_name, wrap=True):
     if wrap:
@@ -77,14 +64,13 @@ class IptablesRule(object):
     """
 
     def __init__(self, chain, rule, wrap=True, top=False,
-                 binary_name=binary_name, tag=None, comment=None):
+                 binary_name=binary_name, tag=None):
         self.chain = get_chain_name(chain, wrap)
         self.rule = rule
         self.wrap = wrap
         self.top = top
         self.wrap_name = binary_name[:16]
         self.tag = tag
-        self.comment = comment
 
     def __eq__(self, other):
         return ((self.chain == other.chain) and
@@ -100,7 +86,7 @@ class IptablesRule(object):
             chain = '%s-%s' % (self.wrap_name, self.chain)
         else:
             chain = self.chain
-        return comment_rule('-A %s %s' % (chain, self.rule), self.comment)
+        return '-A %s %s' % (chain, self.rule)
 
 
 class IptablesTable(object):
@@ -193,8 +179,7 @@ class IptablesTable(object):
         self.rules = [r for r in self.rules
                       if jump_snippet not in r.rule]
 
-    def add_rule(self, chain, rule, wrap=True, top=False, tag=None,
-                 comment=None):
+    def add_rule(self, chain, rule, wrap=True, top=False, tag=None):
         """Add a rule to the table.
 
         This is just like what you'd feed to iptables, just without
@@ -214,7 +199,7 @@ class IptablesTable(object):
                 self._wrap_target_chain(e, wrap) for e in rule.split(' '))
 
         self.rules.append(IptablesRule(chain, rule, wrap, top, self.wrap_name,
-                                       tag, comment))
+                                       tag))
 
     def _wrap_target_chain(self, s, wrap):
         if s.startswith('$'):
@@ -222,7 +207,7 @@ class IptablesTable(object):
 
         return s
 
-    def remove_rule(self, chain, rule, wrap=True, top=False, comment=None):
+    def remove_rule(self, chain, rule, wrap=True, top=False):
         """Remove a rule from a chain.
 
         Note: The rule must be exactly identical to the one that was added.
@@ -237,29 +222,21 @@ class IptablesTable(object):
                     self._wrap_target_chain(e, wrap) for e in rule.split(' '))
 
             self.rules.remove(IptablesRule(chain, rule, wrap, top,
-                                           self.wrap_name,
-                                           comment=comment))
+                                           self.wrap_name))
             if not wrap:
                 self.remove_rules.append(IptablesRule(chain, rule, wrap, top,
-                                                      self.wrap_name,
-                                                      comment=comment))
+                                                      self.wrap_name))
         except ValueError:
             LOG.warn(_('Tried to remove rule that was not there:'
                        ' %(chain)r %(rule)r %(wrap)r %(top)r'),
                      {'chain': chain, 'rule': rule,
                       'top': top, 'wrap': wrap})
 
-    def _get_chain_rules(self, chain, wrap):
-        chain = get_chain_name(chain, wrap)
-        return [rule for rule in self.rules
-                if rule.chain == chain and rule.wrap == wrap]
-
-    def is_chain_empty(self, chain, wrap=True):
-        return not self._get_chain_rules(chain, wrap)
-
     def empty_chain(self, chain, wrap=True):
         """Remove all rules from a chain."""
-        chained_rules = self._get_chain_rules(chain, wrap)
+        chain = get_chain_name(chain, wrap)
+        chained_rules = [rule for rule in self.rules
+                         if rule.chain == chain and rule.wrap == wrap]
         for rule in chained_rules:
             self.rules.remove(rule)
 
@@ -302,7 +279,6 @@ class IptablesManager(object):
         else:
             self.execute = linux_utils.execute
 
-        config.register_iptables_opts(cfg.CONF)
         self.use_ipv6 = use_ipv6
         self.root_helper = root_helper
         self.namespace = namespace
@@ -335,10 +311,6 @@ class IptablesManager(object):
                 {'nat': IptablesTable(binary_name=self.wrap_name)})
             builtin_chains[4].update({'nat': ['PREROUTING',
                                       'OUTPUT', 'POSTROUTING']})
-            self.ipv4.update(
-                {'raw': IptablesTable(binary_name=self.wrap_name)})
-            builtin_chains[4].update({'raw': ['PREROUTING',
-                                      'OUTPUT']})
 
         for ip_version in builtin_chains:
             if ip_version == 4:
@@ -366,20 +338,12 @@ class IptablesManager(object):
             # chain so that it's applied last.
             self.ipv4['nat'].add_chain('snat')
             self.ipv4['nat'].add_rule('neutron-postrouting-bottom',
-                                      '-j $snat', wrap=False,
-                                      comment=ic.SNAT_OUT)
+                                      '-j $snat', wrap=False)
 
             # And then we add a float-snat chain and jump to first thing in
             # the snat chain.
             self.ipv4['nat'].add_chain('float-snat')
             self.ipv4['nat'].add_rule('snat', '-j $float-snat')
-
-    def is_chain_empty(self, table, chain, ip_version=4, wrap=True):
-        try:
-            requested_table = {4: self.ipv4, 6: self.ipv6}[ip_version][table]
-        except KeyError:
-            return True
-        return requested_table.is_chain_empty(chain, wrap)
 
     def defer_apply_on(self):
         self.iptables_apply_deferred = True
@@ -424,9 +388,7 @@ class IptablesManager(object):
                 args = ['ip', 'netns', 'exec', self.namespace] + args
             all_tables = self.execute(args, root_helper=self.root_helper)
             all_lines = all_tables.split('\n')
-            # Traverse tables in sorted order for predictable dump output
-            for table_name in sorted(tables):
-                table = tables[table_name]
+            for table_name, table in tables.iteritems():
                 start, end = self._find_table(all_lines, table_name)
                 all_lines[start:end] = self._modify_rules(
                     all_lines[start:end], table, table_name)
@@ -434,30 +396,8 @@ class IptablesManager(object):
             args = ['%s-restore' % (cmd,), '-c']
             if self.namespace:
                 args = ['ip', 'netns', 'exec', self.namespace] + args
-            try:
-                self.execute(args, process_input='\n'.join(all_lines),
-                             root_helper=self.root_helper)
-            except RuntimeError as r_error:
-                with excutils.save_and_reraise_exception():
-                    try:
-                        line_no = int(re.search(
-                            'iptables-restore: line ([0-9]+?) failed',
-                            str(r_error)).group(1))
-                        context = IPTABLES_ERROR_LINES_OF_CONTEXT
-                        log_start = max(0, line_no - context)
-                        log_end = line_no + context
-                    except AttributeError:
-                        # line error wasn't found, print all lines instead
-                        log_start = 0
-                        log_end = len(all_lines)
-                    log_lines = ('%7d. %s' % (idx, l)
-                                 for idx, l in enumerate(
-                                     all_lines[log_start:log_end],
-                                     log_start + 1)
-                                 )
-                    LOG.error(_("IPTablesManager.apply failed to apply the "
-                                "following set of iptables rules:\n%s"),
-                              '\n'.join(log_lines))
+            self.execute(args, process_input='\n'.join(all_lines),
+                         root_helper=self.root_helper)
         LOG.debug(_("IPTablesManager.apply completed with success"))
 
     def _find_table(self, lines, table_name):
@@ -497,10 +437,8 @@ class IptablesManager(object):
                 return s
 
     def _modify_rules(self, current_lines, table, table_name):
-        # Chains are stored as sets to avoid duplicates.
-        # Sort the output chains here to make their order predictable.
-        unwrapped_chains = sorted(table.unwrapped_chains)
-        chains = sorted(table.chains)
+        unwrapped_chains = table.unwrapped_chains
+        chains = table.chains
         remove_chains = table.remove_chains
         rules = table.rules
         remove_rules = table.remove_rules
@@ -638,7 +576,7 @@ class IptablesManager(object):
             return True
 
         # We filter duplicates.  Go through the chains and rules, letting
-        # the *last* occurrence take precedence since it could have a
+        # the *last* occurrence take precendence since it could have a
         # non-zero [packet:byte] count we want to preserve.  We also filter
         # out anything in the "remove" list.
         new_filter.reverse()

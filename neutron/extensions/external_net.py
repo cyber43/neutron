@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2013 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -29,7 +31,7 @@ EXTERNAL = 'router:external'
 EXTENDED_ATTRIBUTES_2_0 = {
     'networks': {EXTERNAL: {'allow_post': True,
                             'allow_put': True,
-                            'default': False,
+                            'default': attr.ATTR_NOT_SPECIFIED,
                             'is_visible': True,
                             'convert_to': attr.convert_to_boolean,
                             'enforce_policy': True,

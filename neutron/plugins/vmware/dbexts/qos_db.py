@@ -16,7 +16,6 @@
 import sqlalchemy as sa
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
-from sqlalchemy import sql
 
 from neutron.api.v2 import attributes as attr
 from neutron.db import db_base_plugin_v2
@@ -32,7 +31,7 @@ LOG = log.getLogger(__name__)
 
 class QoSQueue(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     name = sa.Column(sa.String(255))
-    default = sa.Column(sa.Boolean, default=False, server_default=sql.false())
+    default = sa.Column(sa.Boolean, default=False)
     min = sa.Column(sa.Integer, nullable=False)
     max = sa.Column(sa.Integer, nullable=True)
     qos_marking = sa.Column(sa.Enum('untrusted', 'trusted',
@@ -228,12 +227,12 @@ class QoSDbMixin(qos.QueuePluginBase):
             port['device_owner'].startswith('network:')):
             return
 
-        # Check if there is a queue associated with the network
+        # Check if there is a queue assocated with the network
         filters = {'network_id': [port['network_id']]}
         network_queue_id = self._get_network_queue_bindings(
             context, filters, ['queue_id'])
         if network_queue_id:
-            # get networks that queue is associated with
+            # get networks that queue is assocated with
             filters = {'queue_id': [network_queue_id[0]['queue_id']]}
             networks_with_same_queue = self._get_network_queue_bindings(
                 context, filters)

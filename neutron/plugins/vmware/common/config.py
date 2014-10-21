@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 VMware, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -71,9 +73,7 @@ base_opts = [
                help=_("The default option leverages service nodes to perform"
                       " packet replication though one could set to this to "
                       "'source' to perform replication locally. This is useful"
-                      " if one does not want to deploy a service node(s). "
-                      "It must be set to 'service' for leveraging distributed "
-                      "routers."))
+                      " if one does not want to deploy a service node(s)."))
 ]
 
 sync_opts = [
@@ -112,8 +112,11 @@ connection_opts = [
                deprecated_name='nvp_password',
                secret=True,
                help=_('Password for NSX controllers in this cluster')),
+    cfg.IntOpt('req_timeout',
+               default=30,
+               help=_('Total time limit for a cluster request')),
     cfg.IntOpt('http_timeout',
-               default=75,
+               default=10,
                help=_('Time before aborting a request')),
     cfg.IntOpt('retries',
                default=2,

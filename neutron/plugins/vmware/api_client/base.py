@@ -14,13 +14,13 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import abc
+from abc import ABCMeta
 import httplib
 import six
 import time
 
 from neutron.openstack.common import log as logging
-from neutron.plugins.vmware import api_client
+from neutron.plugins.vmware.api_client import ctrl_conn_to_str
 
 LOG = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ DEFAULT_CONCURRENT_CONNECTIONS = 3
 DEFAULT_CONNECT_TIMEOUT = 5
 
 
-@six.add_metaclass(abc.ABCMeta)
+@six.add_metaclass(ABCMeta)
 class ApiClientBase(object):
     """An abstract baseclass for all API client implementations."""
 
@@ -109,7 +109,7 @@ class ApiClientBase(object):
         if getattr(conn, 'last_used', now) < now - self.CONN_IDLE_TIMEOUT:
             LOG.info(_("[%(rid)d] Connection %(conn)s idle for %(sec)0.2f "
                        "seconds; reconnecting."),
-                     {'rid': rid, 'conn': api_client.ctrl_conn_to_str(conn),
+                     {'rid': rid, 'conn': ctrl_conn_to_str(conn),
                       'sec': now - conn.last_used})
             conn = self._create_connection(*self._conn_params(conn))
 
@@ -118,8 +118,7 @@ class ApiClientBase(object):
         qsize = self._conn_pool.qsize()
         LOG.debug(_("[%(rid)d] Acquired connection %(conn)s. %(qsize)d "
                     "connection(s) available."),
-                  {'rid': rid, 'conn': api_client.ctrl_conn_to_str(conn),
-                   'qsize': qsize})
+                  {'rid': rid, 'conn': ctrl_conn_to_str(conn), 'qsize': qsize})
         if auto_login and self.auth_cookie(conn) is None:
             self._wait_for_login(conn, headers)
         return conn
@@ -139,20 +138,19 @@ class ApiClientBase(object):
         if self._conn_params(http_conn) not in self._api_providers:
             LOG.debug(_("[%(rid)d] Released connection %(conn)s is not an "
                         "API provider for the cluster"),
-                      {'rid': rid,
-                       'conn': api_client.ctrl_conn_to_str(http_conn)})
+                      {'rid': rid, 'conn': ctrl_conn_to_str(http_conn)})
             return
         elif hasattr(http_conn, "no_release"):
             return
 
-        priority = http_conn.priority
         if bad_state:
             # Reconnect to provider.
             LOG.warn(_("[%(rid)d] Connection returned in bad state, "
                        "reconnecting to %(conn)s"),
-                     {'rid': rid,
-                      'conn': api_client.ctrl_conn_to_str(http_conn)})
+                     {'rid': rid, 'conn': ctrl_conn_to_str(http_conn)})
             http_conn = self._create_connection(*self._conn_params(http_conn))
+            priority = self._next_conn_priority
+            self._next_conn_priority += 1
         elif service_unavail:
             # http_conn returned a service unaviable response, put other
             # connections to the same controller at end of priority queue,
@@ -168,11 +166,13 @@ class ApiClientBase(object):
             # put http_conn at end of queue also
             priority = self._next_conn_priority
             self._next_conn_priority += 1
+        else:
+            priority = http_conn.priority
 
         self._conn_pool.put((priority, http_conn))
         LOG.debug(_("[%(rid)d] Released connection %(conn)s. %(qsize)d "
                     "connection(s) available."),
-                  {'rid': rid, 'conn': api_client.ctrl_conn_to_str(http_conn),
+                  {'rid': rid, 'conn': ctrl_conn_to_str(http_conn),
                    'qsize': self._conn_pool.qsize()})
 
     def _wait_for_login(self, conn, headers=None):
@@ -181,7 +181,7 @@ class ApiClientBase(object):
         data = self._get_provider_data(conn)
         if data is None:
             LOG.error(_("Login request for an invalid connection: '%s'"),
-                      api_client.ctrl_conn_to_str(conn))
+                      ctrl_conn_to_str(conn))
             return
         provider_sem = data[0]
         if provider_sem.acquire(blocking=False):

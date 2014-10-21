@@ -1,5 +1,4 @@
 # Copyright 2013 VMware, Inc.
-#
 # All Rights Reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -14,8 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 #
-# TODO(arosen): This is deprecated in Juno, and
-# to be removed in Kxxxx.
+# TODO(armando-migliaccio): This is deprecated in Icehouse, and
+# to be removed in Juno.
 
 from neutron.plugins.vmware.extensions import qos
 

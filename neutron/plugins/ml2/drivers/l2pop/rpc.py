@@ -12,16 +12,20 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Sylvain Afchain, eNovance SAS
+# @author: Francois Eleouet, Orange
+# @author: Mathieu Rohon, Orange
 
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron.openstack.common import log as logging
+from neutron.openstack.common.rpc import proxy
 
 
 LOG = logging.getLogger(__name__)
 
 
-class L2populationAgentNotifyAPI(n_rpc.RpcProxy):
+class L2populationAgentNotifyAPI(proxy.RpcProxy):
     BASE_RPC_API_VERSION = '1.0'
 
     def __init__(self, topic=topics.AGENT):
@@ -80,3 +84,5 @@ class L2populationAgentNotifyAPI(n_rpc.RpcProxy):
             else:
                 self._notification_fanout(context, 'update_fdb_entries',
                                           fdb_entries)
+
+L2populationAgentNotify = L2populationAgentNotifyAPI()

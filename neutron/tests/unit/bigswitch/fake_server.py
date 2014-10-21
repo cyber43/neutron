@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Big Switch Networks, Inc.  All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,8 +13,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Kevin Benton, <kevin.benton@bigswitch.com>
+#
 
-from neutron.openstack.common import jsonutils
+import json
+
 from neutron.openstack.common import log as logging
 from neutron.plugins.bigswitch import servermanager
 
@@ -116,7 +122,7 @@ class VerifyMultiTenantFloatingIP(HTTPConnectionMock):
     def request(self, action, uri, body, headers):
         # Only handle network update requests
         if 'network' in uri and 'tenant' in uri and 'ports' not in uri:
-            req = jsonutils.loads(body)
+            req = json.loads(body)
             if 'network' not in req or 'floatingips' not in req['network']:
                 msg = _("No floating IPs in request"
                         "uri=%(uri)s, body=%(body)s") % {'uri': uri,

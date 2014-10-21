@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Mirantis, Inc.
 # All Rights Reserved.
 #
@@ -12,6 +14,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Oleg Bondarev (obondarev@mirantis.com)
 
 import contextlib
 
@@ -174,15 +178,7 @@ class TestHaproxyCfg(base.BaseTestCase):
         self.assertEqual(cfg._get_session_persistence(config),
                          ['stick-table type ip size 10k', 'stick on src'])
 
-        config = {'vip': {'session_persistence': {'type': 'HTTP_COOKIE'}},
-                  'members': []}
-        self.assertEqual([], cfg._get_session_persistence(config))
-
         config = {'vip': {'session_persistence': {'type': 'HTTP_COOKIE'}}}
-        self.assertEqual([], cfg._get_session_persistence(config))
-
-        config = {'vip': {'session_persistence': {'type': 'HTTP_COOKIE'}},
-                  'members': [{'id': 'member1_id'}]}
         self.assertEqual(cfg._get_session_persistence(config),
                          ['cookie SRV insert indirect nocache'])
 

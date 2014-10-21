@@ -15,9 +15,6 @@
 
 from sqlalchemy.orm import exc
 
-from oslo.db import exception as db_exc
-
-from neutron.common import constants as n_const
 from neutron.db import api as db_api
 from neutron.db import models_v2
 from neutron.db import securitygroups_db as sg_db
@@ -31,28 +28,16 @@ from neutron.plugins.ml2 import models
 LOG = log.getLogger(__name__)
 
 
-def _make_segment_dict(record):
-    """Make a segment dictionary out of a DB record."""
-    return {api.ID: record.id,
-            api.NETWORK_TYPE: record.network_type,
-            api.PHYSICAL_NETWORK: record.physical_network,
-            api.SEGMENTATION_ID: record.segmentation_id}
-
-
-def add_network_segment(session, network_id, segment, segment_index=0,
-                        is_dynamic=False):
+def add_network_segment(session, network_id, segment):
     with session.begin(subtransactions=True):
         record = models.NetworkSegment(
             id=uuidutils.generate_uuid(),
             network_id=network_id,
             network_type=segment.get(api.NETWORK_TYPE),
             physical_network=segment.get(api.PHYSICAL_NETWORK),
-            segmentation_id=segment.get(api.SEGMENTATION_ID),
-            segment_index=segment_index,
-            is_dynamic=is_dynamic
+            segmentation_id=segment.get(api.SEGMENTATION_ID)
         )
         session.add(record)
-        segment[api.ID] = record.id
     LOG.info(_("Added segment %(id)s of type %(network_type)s for network"
                " %(network_id)s"),
              {'id': record.id,
@@ -60,129 +45,29 @@ def add_network_segment(session, network_id, segment, segment_index=0,
               'network_id': record.network_id})
 
 
-def get_network_segments(session, network_id, filter_dynamic=False):
+def get_network_segments(session, network_id):
     with session.begin(subtransactions=True):
-        query = (session.query(models.NetworkSegment).
-                 filter_by(network_id=network_id).
-                 order_by(models.NetworkSegment.segment_index))
-        if filter_dynamic is not None:
-            query = query.filter_by(is_dynamic=filter_dynamic)
-        records = query.all()
+        records = (session.query(models.NetworkSegment).
+                   filter_by(network_id=network_id))
+        return [{api.ID: record.id,
+                 api.NETWORK_TYPE: record.network_type,
+                 api.PHYSICAL_NETWORK: record.physical_network,
+                 api.SEGMENTATION_ID: record.segmentation_id}
+                for record in records]
 
-        return [_make_segment_dict(record) for record in records]
 
-
-def get_segment_by_id(session, segment_id):
+def ensure_port_binding(session, port_id):
     with session.begin(subtransactions=True):
         try:
-            record = (session.query(models.NetworkSegment).
-                      filter_by(id=segment_id).
+            record = (session.query(models.PortBinding).
+                      filter_by(port_id=port_id).
                       one())
-            return _make_segment_dict(record)
         except exc.NoResultFound:
-            return
-
-
-def get_dynamic_segment(session, network_id, physical_network=None,
-                        segmentation_id=None):
-        """Return a dynamic segment for the filters provided if one exists."""
-        with session.begin(subtransactions=True):
-            query = (session.query(models.NetworkSegment).
-                     filter_by(network_id=network_id, is_dynamic=True))
-            if physical_network:
-                query = query.filter_by(physical_network=physical_network)
-            if segmentation_id:
-                query = query.filter_by(segmentation_id=segmentation_id)
-            record = query.first()
-
-        if record:
-            return _make_segment_dict(record)
-        else:
-            LOG.debug("No dynamic segment %s found for "
-                      "Network:%(network_id)s, "
-                      "Physical network:%(physnet)s, "
-                      "segmentation_id:%(segmentation_id)s",
-                      {'network_id': network_id,
-                       'physnet': physical_network,
-                       'segmentation_id': segmentation_id})
-            return None
-
-
-def delete_network_segment(session, segment_id):
-    """Release a dynamic segment for the params provided if one exists."""
-    with session.begin(subtransactions=True):
-        (session.query(models.NetworkSegment).
-         filter_by(id=segment_id).delete())
-
-
-def add_port_binding(session, port_id):
-    with session.begin(subtransactions=True):
-        record = models.PortBinding(
-            port_id=port_id,
-            vif_type=portbindings.VIF_TYPE_UNBOUND)
-        session.add(record)
-        return record
-
-
-def get_locked_port_and_binding(session, port_id):
-    """Get port and port binding records for update within transaction."""
-
-    try:
-        # REVISIT(rkukura): We need the Port and PortBinding records
-        # to both be added to the session and locked for update. A
-        # single joined query should work, but the combination of left
-        # outer joins and postgresql doesn't seem to work.
-        port = (session.query(models_v2.Port).
-                enable_eagerloads(False).
-                filter_by(id=port_id).
-                with_lockmode('update').
-                one())
-        binding = (session.query(models.PortBinding).
-                   enable_eagerloads(False).
-                   filter_by(port_id=port_id).
-                   with_lockmode('update').
-                   one())
-        return port, binding
-    except exc.NoResultFound:
-        return None, None
-
-
-def ensure_dvr_port_binding(session, port_id, host, router_id=None):
-    record = (session.query(models.DVRPortBinding).
-              filter_by(port_id=port_id, host=host).first())
-    if record:
-        return record
-
-    try:
-        with session.begin(subtransactions=True):
-            record = models.DVRPortBinding(
+            record = models.PortBinding(
                 port_id=port_id,
-                host=host,
-                router_id=router_id,
-                vif_type=portbindings.VIF_TYPE_UNBOUND,
-                vnic_type=portbindings.VNIC_NORMAL,
-                cap_port_filter=False,
-                status=n_const.PORT_STATUS_DOWN)
+                vif_type=portbindings.VIF_TYPE_UNBOUND)
             session.add(record)
-            return record
-    except db_exc.DBDuplicateEntry:
-        LOG.debug("DVR Port %s already bound", port_id)
-        return (session.query(models.DVRPortBinding).
-                filter_by(port_id=port_id, host=host).one())
-
-
-def delete_dvr_port_binding(session, port_id, host):
-    with session.begin(subtransactions=True):
-        (session.query(models.DVRPortBinding).
-         filter_by(port_id=port_id, host=host).
-         delete(synchronize_session=False))
-
-
-def delete_dvr_port_binding_if_stale(session, binding):
-    if not binding.router_id and binding.status == n_const.PORT_STATUS_DOWN:
-        with session.begin(subtransactions=True):
-            LOG.debug("DVR: Deleting binding %s", binding)
-            session.delete(binding)
+        return record
 
 
 def get_port(session, port_id):
@@ -248,42 +133,4 @@ def get_port_binding_host(port_id):
             LOG.debug(_("No binding found for port %(port_id)s"),
                       {'port_id': port_id})
             return
-        except exc.MultipleResultsFound:
-            LOG.error(_("Multiple ports have port_id starting with %s"),
-                      port_id)
-            return
     return query.host
-
-
-def generate_dvr_port_status(session, port_id):
-    # an OR'ed value of status assigned to parent port from the
-    # dvrportbinding bucket
-    query = session.query(models.DVRPortBinding)
-    final_status = n_const.PORT_STATUS_BUILD
-    for bind in query.filter(models.DVRPortBinding.port_id == port_id):
-        if bind.status == n_const.PORT_STATUS_ACTIVE:
-            return bind.status
-        elif bind.status == n_const.PORT_STATUS_DOWN:
-            final_status = bind.status
-    return final_status
-
-
-def get_dvr_port_binding_by_host(session, port_id, host):
-    with session.begin(subtransactions=True):
-        binding = (session.query(models.DVRPortBinding).
-                   filter(models.DVRPortBinding.port_id.startswith(port_id),
-                          models.DVRPortBinding.host == host).first())
-    if not binding:
-        LOG.debug("No binding for DVR port %(port_id)s with host "
-                  "%(host)s", {'port_id': port_id, 'host': host})
-    return binding
-
-
-def get_dvr_port_bindings(session, port_id):
-    with session.begin(subtransactions=True):
-        bindings = (session.query(models.DVRPortBinding).
-                    filter(models.DVRPortBinding.port_id.startswith(port_id)).
-                    all())
-    if not bindings:
-        LOG.debug("No bindings for DVR port %s", port_id)
-    return bindings

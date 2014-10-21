@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 Big Switch Networks, Inc.
 # All Rights Reserved.
 #
@@ -12,28 +14,35 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Sumit Naiksatam, sumitnaiksatam@gmail.com, Big Switch Networks, Inc.
 
 from oslo.config import cfg
 
 from neutron.common import exceptions as n_exception
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron.common import topics
 from neutron import context as neutron_context
+from neutron.db import api as qdbapi
 from neutron.db.firewall import firewall_db
 from neutron.extensions import firewall as fw_ext
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import rpc
+from neutron.openstack.common.rpc import proxy
 from neutron.plugins.common import constants as const
 
 
 LOG = logging.getLogger(__name__)
 
 
-class FirewallCallbacks(n_rpc.RpcCallback):
+class FirewallCallbacks(object):
     RPC_API_VERSION = '1.0'
 
     def __init__(self, plugin):
-        super(FirewallCallbacks, self).__init__()
         self.plugin = plugin
+
+    def create_rpc_dispatcher(self):
+        return q_rpc.PluginRpcDispatcher([self])
 
     def set_firewall_status(self, context, firewall_id, status, **kwargs):
         """Agent uses this to set a firewall's status."""
@@ -49,7 +58,9 @@ class FirewallCallbacks(n_rpc.RpcCallback):
                             "not changing to %(status)s"),
                           {'fw_id': firewall_id, 'status': status})
                 return False
-            if status in (const.ACTIVE, const.DOWN):
+            #TODO(xuhanp): Remove INACTIVE status and use DOWN to
+            # be consistent with other network resources
+            if status in (const.ACTIVE, const.INACTIVE, const.DOWN):
                 fw_db.status = status
                 return True
             else:
@@ -66,10 +77,9 @@ class FirewallCallbacks(n_rpc.RpcCallback):
                 self.plugin.delete_db_firewall_object(context, firewall_id)
                 return True
             else:
-                LOG.warn(_('Firewall %(fw)s unexpectedly deleted by agent, '
-                           'status was %(status)s'),
-                         {'fw': firewall_id, 'status': fw_db.status})
                 fw_db.status = const.ERROR
+                LOG.warn(_('Firewall %s unexpectedly deleted by agent.'),
+                         firewall_id)
                 return False
 
     def get_firewalls_for_tenant(self, context, **kwargs):
@@ -96,7 +106,7 @@ class FirewallCallbacks(n_rpc.RpcCallback):
         return fw_tenant_list
 
 
-class FirewallAgentApi(n_rpc.RpcProxy):
+class FirewallAgentApi(proxy.RpcProxy):
     """Plugin side of plugin to agent RPC API."""
 
     API_VERSION = '1.0'
@@ -109,21 +119,24 @@ class FirewallAgentApi(n_rpc.RpcProxy):
         return self.fanout_cast(
             context,
             self.make_msg('create_firewall', firewall=firewall,
-                          host=self.host)
+                          host=self.host),
+            topic=self.topic
         )
 
     def update_firewall(self, context, firewall):
         return self.fanout_cast(
             context,
             self.make_msg('update_firewall', firewall=firewall,
-                          host=self.host)
+                          host=self.host),
+            topic=self.topic
         )
 
     def delete_firewall(self, context, firewall):
         return self.fanout_cast(
             context,
             self.make_msg('delete_firewall', firewall=firewall,
-                          host=self.host)
+                          host=self.host),
+            topic=self.topic
         )
 
 
@@ -150,13 +163,16 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
 
     def __init__(self):
         """Do the initialization for the firewall service plugin here."""
+        qdbapi.register_models()
 
-        self.endpoints = [FirewallCallbacks(self)]
+        self.callbacks = FirewallCallbacks(self)
 
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.conn.create_consumer(
-            topics.FIREWALL_PLUGIN, self.endpoints, fanout=False)
-        self.conn.consume_in_threads()
+            topics.FIREWALL_PLUGIN,
+            self.callbacks.create_rpc_dispatcher(),
+            fanout=False)
+        self.conn.consume_in_thread()
 
         self.agent_rpc = FirewallAgentApi(
             topics.L3_AGENT,
@@ -180,11 +196,13 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
 
     def _rpc_update_firewall(self, context, firewall_id):
         status_update = {"firewall": {"status": const.PENDING_UPDATE}}
-        super(FirewallPlugin, self).update_firewall(context, firewall_id,
-                                                    status_update)
-        fw_with_rules = self._make_firewall_dict_with_rules(context,
-                                                            firewall_id)
-        self.agent_rpc.update_firewall(context, fw_with_rules)
+        fw = super(FirewallPlugin, self).update_firewall(context, firewall_id,
+                                                         status_update)
+        if fw:
+            fw_with_rules = (
+                self._make_firewall_dict_with_rules(context,
+                                                    firewall_id))
+            self.agent_rpc.update_firewall(context, fw_with_rules)
 
     def _rpc_update_firewall_policy(self, context, firewall_policy_id):
         firewall_policy = self.get_firewall_policy(context, firewall_policy_id)
@@ -206,7 +224,8 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
             for firewall_id in firewall_policy['firewall_list']:
                 self._ensure_update_firewall(context, firewall_id)
 
-    def _ensure_update_firewall_rule(self, context, firewall_rule_id):
+    def _ensure_update_or_delete_firewall_rule(self, context,
+                                               firewall_rule_id):
         fw_rule = self.get_firewall_rule(context, firewall_rule_id)
         if 'firewall_policy_id' in fw_rule and fw_rule['firewall_policy_id']:
             self._ensure_update_firewall_policy(context,
@@ -220,6 +239,7 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
                                             filters={'tenant_id': [tenant_id]})
         if fw_count:
             raise FirewallCountExceeded(tenant_id=tenant_id)
+        firewall['firewall']['status'] = const.PENDING_CREATE
         fw = super(FirewallPlugin, self).create_firewall(context, firewall)
         fw_with_rules = (
             self._make_firewall_dict_with_rules(context, fw['id']))
@@ -238,7 +258,7 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
 
     def delete_db_firewall_object(self, context, id):
         firewall = self.get_firewall(context, id)
-        if firewall['status'] == const.PENDING_DELETE:
+        if firewall['status'] in [const.PENDING_DELETE]:
             super(FirewallPlugin, self).delete_firewall(context, id)
 
     def delete_firewall(self, context, id):
@@ -260,13 +280,32 @@ class FirewallPlugin(firewall_db.Firewall_db_mixin):
 
     def update_firewall_rule(self, context, id, firewall_rule):
         LOG.debug(_("update_firewall_rule() called"))
-        self._ensure_update_firewall_rule(context, id)
+        self._ensure_update_or_delete_firewall_rule(context, id)
         fwr = super(FirewallPlugin,
                     self).update_firewall_rule(context, id, firewall_rule)
         firewall_policy_id = fwr['firewall_policy_id']
         if firewall_policy_id:
             self._rpc_update_firewall_policy(context, firewall_policy_id)
         return fwr
+
+    def delete_firewall_rule(self, context, id):
+        LOG.debug(_("delete_firewall_rule() called"))
+        self._ensure_update_or_delete_firewall_rule(context, id)
+        fwr = self.get_firewall_rule(context, id)
+        firewall_policy_id = fwr['firewall_policy_id']
+        super(FirewallPlugin, self).delete_firewall_rule(context, id)
+        # At this point we have already deleted the rule in the DB,
+        # however it's still not deleted on the backend firewall.
+        # Until it gets deleted on the backend we will be setting
+        # the firewall in PENDING_UPDATE state. The backend firewall
+        # implementation is responsible for setting the appropriate
+        # configuration (e.g. do not allow any traffic) until the rule
+        # is deleted. Once the rule is deleted, the backend should put
+        # the firewall back in ACTIVE state. While the firewall is in
+        # PENDING_UPDATE state, the firewall behavior might differ based
+        # on the backend implementation.
+        if firewall_policy_id:
+            self._rpc_update_firewall_policy(context, firewall_policy_id)
 
     def insert_rule(self, context, id, rule_info):
         LOG.debug(_("insert_rule() called"))

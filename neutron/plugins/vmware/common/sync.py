@@ -15,13 +15,14 @@
 
 import random
 
+from sqlalchemy.orm import exc
+
 from neutron.common import constants
 from neutron.common import exceptions
 from neutron import context
 from neutron.db import external_net_db
 from neutron.db import l3_db
 from neutron.db import models_v2
-from neutron.extensions import l3
 from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log
 from neutron.openstack.common import loopingcall
@@ -78,7 +79,6 @@ class NsxCache(object):
                 # The item is not anymore in NSX, so delete it
                 del resources[uuid]
                 del self._uuid_dict_mappings[uuid]
-                LOG.debug("Removed item %s from NSX object cache", uuid)
 
     def _update_resources(self, resources, new_resources, clear_changed=True):
         if clear_changed:
@@ -100,7 +100,6 @@ class NsxCache(object):
                     resources[item_id]['data'] = item
                 # Mark the item as hit in any case
                 resources[item_id]['hit'] = True
-                LOG.debug("Updating item %s in NSX object cache", item_id)
             else:
                 resources[item_id] = {'hash': do_hash(item)}
                 resources[item_id]['hit'] = True
@@ -109,7 +108,6 @@ class NsxCache(object):
                 # add a uuid to dict mapping for easy retrieval
                 # with __getitem__
                 self._uuid_dict_mappings[item_id] = resources
-                LOG.debug("Added item %s to NSX object cache", item_id)
 
     def _delete_resources(self, resources):
         # Mark for removal all the elements which have not been visited.
@@ -292,7 +290,7 @@ class NsxSynchronizer():
             try:
                 network = self._plugin._get_network(context,
                                                     neutron_network_data['id'])
-            except exceptions.NetworkNotFound:
+            except exc.NoResultFound:
                 pass
             else:
                 network.status = status
@@ -374,7 +372,7 @@ class NsxSynchronizer():
             try:
                 router = self._plugin._get_router(context,
                                                   neutron_router_data['id'])
-            except l3.RouterNotFound:
+            except exc.NoResultFound:
                 pass
             else:
                 router.status = status
@@ -469,7 +467,7 @@ class NsxSynchronizer():
             try:
                 port = self._plugin._get_port(context,
                                               neutron_port_data['id'])
-            except exceptions.PortNotFound:
+            except exc.NoResultFound:
                 pass
             else:
                 port.status = status
@@ -601,7 +599,7 @@ class NsxSynchronizer():
     def _synchronize_state(self, sp):
         # If the plugin has been destroyed, stop the LoopingCall
         if not self._plugin:
-            raise loopingcall.LoopingCallDone()
+            raise loopingcall.LoopingCallDone
         start = timeutils.utcnow()
         # Reset page cursor variables if necessary
         if sp.current_chunk == 0:
@@ -630,14 +628,12 @@ class NsxSynchronizer():
         LOG.debug(_("Number of chunks: %d"), num_chunks)
         # Find objects which have changed on NSX side and need
         # to be synchronized
-        LOG.debug("Processing NSX cache for updated objects")
         (ls_uuids, lr_uuids, lp_uuids) = self._nsx_cache.process_updates(
             lswitches, lrouters, lswitchports)
         # Process removed objects only at the last chunk
         scan_missing = (sp.current_chunk == num_chunks - 1 and
                         not sp.init_sync_performed)
         if sp.current_chunk == num_chunks - 1:
-            LOG.debug("Processing NSX cache for deleted objects")
             self._nsx_cache.process_deletes()
             ls_uuids = self._nsx_cache.get_lswitches(
                 changed_only=not scan_missing)

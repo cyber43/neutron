@@ -41,6 +41,10 @@ class DuplicateAddressPairInRequest(nexception.InvalidInput):
                 "mac_address %(mac_address)s ip_address %(ip_address)s.")
 
 
+class AddressPairMatchesPortFixedIPAndMac(nexception.InvalidInput):
+    message = _("Port's Fixed IP and Mac Address match an address pair entry.")
+
+
 class AllowedAddressPairExhausted(nexception.BadRequest):
     message = _("The number of allowed address pair "
                 "exceeds the maximum %(quota)s.")

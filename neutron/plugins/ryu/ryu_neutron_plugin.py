@@ -1,3 +1,4 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 # Copyright 2012 Isaku Yamahata <yamahata at private email ne jp>
 #                               <yamahata at valinux co jp>
 # All Rights Reserved.
@@ -13,30 +14,32 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Isaku Yamahata
 
 from oslo.config import cfg
 from ryu.app import client
 from ryu.app import rest_nw_id
 
 from neutron.agent import securitygroups_rpc as sg_rpc
-from neutron.api.rpc.handlers import dhcp_rpc
-from neutron.api.rpc.handlers import l3_rpc
-from neutron.api.rpc.handlers import securitygroups_rpc
 from neutron.common import constants as q_const
 from neutron.common import exceptions as n_exc
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron.common import topics
 from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
+from neutron.db import dhcp_rpc_base
 from neutron.db import external_net_db
 from neutron.db import extraroute_db
 from neutron.db import l3_gwmode_db
+from neutron.db import l3_rpc_base
 from neutron.db import models_v2
 from neutron.db import portbindings_base
 from neutron.db import securitygroups_rpc_base as sg_db_rpc
 from neutron.extensions import portbindings
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import rpc
+from neutron.openstack.common.rpc import proxy
 from neutron.plugins.common import constants as svc_constants
 from neutron.plugins.ryu.common import config  # noqa
 from neutron.plugins.ryu.db import api_v2 as db_api_v2
@@ -45,7 +48,21 @@ from neutron.plugins.ryu.db import api_v2 as db_api_v2
 LOG = logging.getLogger(__name__)
 
 
-class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
+class RyuRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
+                      l3_rpc_base.L3RpcCallbackMixin,
+                      sg_db_rpc.SecurityGroupServerRpcCallbackMixin):
+
+    RPC_API_VERSION = '1.1'
+
+    def __init__(self, ofp_rest_api_addr):
+        self.ofp_rest_api_addr = ofp_rest_api_addr
+
+    def create_rpc_dispatcher(self):
+        return q_rpc.PluginRpcDispatcher([self])
+
+    def get_ofp_rest_api(self, context, **kwargs):
+        LOG.debug(_("get_ofp_rest_api: %s"), self.ofp_rest_api_addr)
+        return self.ofp_rest_api_addr
 
     @classmethod
     def get_port_from_device(cls, device):
@@ -55,20 +72,7 @@ class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
         return port
 
 
-class RyuRpcCallbacks(n_rpc.RpcCallback):
-
-    RPC_API_VERSION = '1.1'
-
-    def __init__(self, ofp_rest_api_addr):
-        super(RyuRpcCallbacks, self).__init__()
-        self.ofp_rest_api_addr = ofp_rest_api_addr
-
-    def get_ofp_rest_api(self, context, **kwargs):
-        LOG.debug(_("get_ofp_rest_api: %s"), self.ofp_rest_api_addr)
-        return self.ofp_rest_api_addr
-
-
-class AgentNotifierApi(n_rpc.RpcProxy,
+class AgentNotifierApi(proxy.RpcProxy,
                        sg_rpc.SecurityGroupAgentRpcApiMixin):
 
     BASE_RPC_API_VERSION = '1.0'
@@ -90,7 +94,7 @@ class RyuNeutronPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                          external_net_db.External_net_db_mixin,
                          extraroute_db.ExtraRoute_db_mixin,
                          l3_gwmode_db.L3_NAT_db_mixin,
-                         SecurityGroupServerRpcMixin,
+                         sg_db_rpc.SecurityGroupServerRpcMixin,
                          portbindings_base.PortBindingBaseMixin):
 
     _supported_extension_aliases = ["external-net", "router", "ext-gw-mode",
@@ -137,15 +141,13 @@ class RyuNeutronPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def _setup_rpc(self):
         self.service_topics = {svc_constants.CORE: topics.PLUGIN,
                                svc_constants.L3_ROUTER_NAT: topics.L3PLUGIN}
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.notifier = AgentNotifierApi(topics.AGENT)
-        self.endpoints = [RyuRpcCallbacks(self.ofp_api_host),
-                          securitygroups_rpc.SecurityGroupServerRpcCallback(),
-                          dhcp_rpc.DhcpRpcCallback(),
-                          l3_rpc.L3RpcCallback()]
+        self.callbacks = RyuRpcCallbacks(self.ofp_api_host)
+        self.dispatcher = self.callbacks.create_rpc_dispatcher()
         for svc_topic in self.service_topics.values():
-            self.conn.create_consumer(svc_topic, self.endpoints, fanout=False)
-        self.conn.consume_in_threads()
+            self.conn.create_consumer(svc_topic, self.dispatcher, fanout=False)
+        self.conn.consume_in_thread()
 
     def _create_all_tenant_network(self):
         for net in db_api_v2.network_all_tenant_list():
@@ -208,7 +210,6 @@ class RyuNeutronPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         session = context.session
         with session.begin(subtransactions=True):
             self.tunnel_key.delete(session, id)
-            self._process_l3_delete(context, id)
             super(RyuNeutronPluginV2, self).delete_network(context, id)
 
     def create_port(self, context, port):

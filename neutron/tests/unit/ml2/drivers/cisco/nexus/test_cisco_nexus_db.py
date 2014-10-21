@@ -16,16 +16,22 @@
 import collections
 import testtools
 
+from neutron.db import api as db
 from neutron.plugins.ml2.drivers.cisco.nexus import exceptions
 from neutron.plugins.ml2.drivers.cisco.nexus import nexus_db_v2
-from neutron.tests.unit import testlib_api
+from neutron.tests import base
 
 
-class CiscoNexusDbTest(testlib_api.SqlTestCase):
+class CiscoNexusDbTest(base.BaseTestCase):
 
     """Unit tests for Cisco mechanism driver's Nexus port binding database."""
 
     NpbObj = collections.namedtuple('NpbObj', 'port vlan switch instance')
+
+    def setUp(self):
+        super(CiscoNexusDbTest, self).setUp()
+        db.configure_db()
+        self.addCleanup(db.clear_db)
 
     def _npb_test_obj(self, pnum, vnum, switch='10.9.8.7', instance=None):
         """Creates a Nexus port binding test object from a pair of numbers."""
@@ -70,8 +76,8 @@ class CiscoNexusDbTest(testlib_api.SqlTestCase):
         return nexus_db_v2.get_nexusvlan_binding(npb.vlan, npb.switch)
 
     def _get_nexusvm_binding(self, npb):
-        """Gets port binding based on vlan and instance."""
-        return nexus_db_v2.get_nexusvm_bindings(npb.vlan, npb.instance)[0]
+        """Gets port bindings based on vlan and instance."""
+        return nexus_db_v2.get_nexusvm_binding(npb.vlan, npb.instance)
 
     def _get_port_vlan_switch_binding(self, npb):
         """Gets port bindings based on port, vlan, and switch."""
@@ -143,7 +149,7 @@ class CiscoNexusDbTest(testlib_api.SqlTestCase):
         self._assert_bindings_match(npb, npb22)
 
         with testtools.ExpectedException(exceptions.NexusPortBindingNotFound):
-            nexus_db_v2.get_nexusvm_bindings(npb21.vlan, "dummyInstance")[0]
+            nexus_db_v2.get_nexusvm_binding(npb21.vlan, "dummyInstance")
 
     def test_nexusportvlanswitchbinding_get(self):
         """Tests get of port bindings based on port, vlan, and switch."""
@@ -174,6 +180,21 @@ class CiscoNexusDbTest(testlib_api.SqlTestCase):
 
         npb = nexus_db_v2.get_port_switch_bindings(npb21.port, "dummySwitch")
         self.assertIsNone(npb)
+
+    def test_nexussvibinding_get(self):
+        """Tests get of switch virtual interface port bindings."""
+        npbr1 = self._npb_test_obj('router', 100)
+        npb21 = self._npb_test_obj(20, 100)
+        self._add_bindings_to_db([npbr1, npb21])
+
+        npb_svi = nexus_db_v2.get_nexussvi_bindings()
+        self.assertEqual(len(npb_svi), 1)
+        self._assert_bindings_match(npb_svi[0], npbr1)
+
+        npbr2 = self._npb_test_obj('router', 200)
+        self._add_binding_to_db(npbr2)
+        npb_svi = nexus_db_v2.get_nexussvi_bindings()
+        self.assertEqual(len(npb_svi), 2)
 
     def test_nexusbinding_update(self):
         """Tests update of vlan IDs for port bindings."""

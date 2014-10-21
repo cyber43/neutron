@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All rights reserved.
 #
@@ -35,7 +37,7 @@ EXTENDED_ATTRIBUTES_2_0 = {
                            'enforce_policy': True,
                            'is_visible': True},
         SEGMENTATION_ID: {'allow_post': True, 'allow_put': True,
-                          'convert_to': attributes.convert_to_int,
+                          'convert_to': int,
                           'enforce_policy': True,
                           'default': attributes.ATTR_NOT_SPECIFIED,
                           'is_visible': True},

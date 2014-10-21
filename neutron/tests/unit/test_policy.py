@@ -15,6 +15,7 @@
 
 """Test of Policy Engine For Neutron"""
 
+import json
 import urllib2
 
 import fixtures
@@ -23,12 +24,10 @@ import six
 
 import neutron
 from neutron.api.v2 import attributes
-from neutron.common import constants as const
 from neutron.common import exceptions
 from neutron import context
 from neutron import manager
 from neutron.openstack.common import importutils
-from neutron.openstack.common import jsonutils
 from neutron.openstack.common import policy as common_policy
 from neutron import policy
 from neutron.tests import base
@@ -54,14 +53,12 @@ class PolicyFileTestCase(base.BaseTestCase):
             action = "example:test"
             with open(tmpfilename, "w") as policyfile:
                 policyfile.write("""{"example:test": ""}""")
-            policy.init()
             policy.enforce(self.context, action, self.target)
             with open(tmpfilename, "w") as policyfile:
                 policyfile.write("""{"example:test": "!"}""")
             # NOTE(vish): reset stored policy cache so we don't have to
             # sleep(1)
             policy._POLICY_CACHE = {}
-            policy.init()
             self.assertRaises(exceptions.PolicyNotAuthorized,
                               policy.enforce,
                               self.context,
@@ -109,13 +106,11 @@ class PolicyTestCase(base.BaseTestCase):
         result = policy.check(self.context, action, self.target)
         self.assertEqual(result, False)
 
-    def test_check_non_existent_action(self):
+    def test_check_if_exists_non_existent_action_raises(self):
         action = "example:idonotexist"
-        result_1 = policy.check(self.context, action, self.target)
-        self.assertFalse(result_1)
-        result_2 = policy.check(self.context, action, self.target,
-                                might_not_exist=True)
-        self.assertTrue(result_2)
+        self.assertRaises(exceptions.PolicyRuleNotFound,
+                          policy.check_if_exists,
+                          self.context, action, self.target)
 
     def test_enforce_good_action(self):
         action = "example:allowed"
@@ -273,6 +268,7 @@ class NeutronPolicyTestCase(base.BaseTestCase):
                                          'init',
                                          new=fakepolicyinit)
         self.patcher.start()
+        self.addCleanup(self.patcher.stop)
         self.addCleanup(remove_fake_resource)
         self.context = context.Context('fake', 'fake', roles=['user'])
         plugin_klass = importutils.import_class(
@@ -281,13 +277,12 @@ class NeutronPolicyTestCase(base.BaseTestCase):
         fake_manager = self.manager_patcher.start()
         fake_manager_instance = fake_manager.return_value
         fake_manager_instance.plugin = plugin_klass()
+        self.addCleanup(self.manager_patcher.stop)
 
     def _test_action_on_attr(self, context, action, attr, value,
-                             exception=None, **kwargs):
+                             exception=None):
         action = "%s_network" % action
         target = {'tenant_id': 'the_owner', attr: value}
-        if kwargs:
-            target.update(kwargs)
         if exception:
             self.assertRaises(exception, policy.enforce,
                               context, action, target)
@@ -296,10 +291,10 @@ class NeutronPolicyTestCase(base.BaseTestCase):
             self.assertEqual(result, True)
 
     def _test_nonadmin_action_on_attr(self, action, attr, value,
-                                      exception=None, **kwargs):
+                                      exception=None):
         user_context = context.Context('', "user", roles=['user'])
         self._test_action_on_attr(user_context, action, attr,
-                                  value, exception, **kwargs)
+                                  value, exception)
 
     def test_nonadmin_write_on_private_fails(self):
         self._test_nonadmin_action_on_attr('create', 'shared', False,
@@ -316,11 +311,9 @@ class NeutronPolicyTestCase(base.BaseTestCase):
     def test_nonadmin_read_on_shared_succeeds(self):
         self._test_nonadmin_action_on_attr('get', 'shared', True)
 
-    def _test_enforce_adminonly_attribute(self, action, **kwargs):
+    def _test_enforce_adminonly_attribute(self, action):
         admin_context = context.get_admin_context()
         target = {'shared': True}
-        if kwargs:
-            target.update(kwargs)
         result = policy.enforce(admin_context, action, target)
         self.assertEqual(result, True)
 
@@ -328,14 +321,7 @@ class NeutronPolicyTestCase(base.BaseTestCase):
         self._test_enforce_adminonly_attribute('create_network')
 
     def test_enforce_adminonly_attribute_update(self):
-        kwargs = {const.ATTRIBUTES_TO_UPDATE: ['shared']}
-        self._test_enforce_adminonly_attribute('update_network', **kwargs)
-
-    def test_reset_adminonly_attr_to_default_fails(self):
-        kwargs = {const.ATTRIBUTES_TO_UPDATE: ['shared']}
-        self._test_nonadmin_action_on_attr('update', 'shared', False,
-                                           exceptions.PolicyNotAuthorized,
-                                           **kwargs)
+        self._test_enforce_adminonly_attribute('update_network')
 
     def test_enforce_adminonly_attribute_no_context_is_admin_policy(self):
         del self.rules[policy.ADMIN_CTX_POLICY]
@@ -485,7 +471,6 @@ class NeutronPolicyTestCase(base.BaseTestCase):
         # Trigger a policy with rule admin_or_owner
         action = "create_network"
         target = {'tenant_id': 'fake'}
-        policy.init()
         self.assertRaises(exceptions.PolicyCheckError,
                           policy.enforce,
                           self.context, action, target)
@@ -536,7 +521,7 @@ class NeutronPolicyTestCase(base.BaseTestCase):
 
     def _test_set_rules_with_deprecated_policy(self, input_rules,
                                                expected_rules):
-        policy._set_rules(jsonutils.dumps(input_rules))
+        policy._set_rules(json.dumps(input_rules))
         # verify deprecated policy has been removed
         for pol in input_rules.keys():
             self.assertNotIn(pol, common_policy._rules)
@@ -563,24 +548,3 @@ class NeutronPolicyTestCase(base.BaseTestCase):
             {'extension:provider_network:set': 'rule:admin_only'},
             dict((policy, 'rule:admin_only') for policy in
                  expected_policies))
-
-    def test_process_rules(self):
-        action = "create_something"
-        # Construct RuleChecks for an action, attribute and subattribute
-        match_rule = common_policy.RuleCheck('rule', action)
-        attr_rule = common_policy.RuleCheck('rule', '%s:%s' %
-                                                    (action, 'somethings'))
-        sub_attr_rules = [common_policy.RuleCheck('rule', '%s:%s:%s' %
-                                                          (action, 'attr',
-                                                           'sub_attr_1'))]
-        # Build an AndCheck from the given RuleChecks
-        # Make the checks nested to better check the recursion
-        sub_attr_rules = common_policy.AndCheck(sub_attr_rules)
-        attr_rule = common_policy.AndCheck(
-            [attr_rule, sub_attr_rules])
-
-        match_rule = common_policy.AndCheck([match_rule, attr_rule])
-        # Assert that the rules are correctly extracted from the match_rule
-        rules = policy._process_rules_list([], match_rule)
-        self.assertEqual(['create_something', 'create_something:somethings',
-                          'create_something:attr:sub_attr_1'], rules)

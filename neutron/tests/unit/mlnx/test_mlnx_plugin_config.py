@@ -19,11 +19,11 @@ from oslo.config import cfg
 #NOTE this import loads tests required options
 from neutron.plugins.mlnx.common import config  # noqa
 from neutron.plugins.mlnx.common import constants
-from neutron.plugins.mlnx import mlnx_plugin
-from neutron.tests.unit import testlib_api
+from neutron.plugins.mlnx.mlnx_plugin import MellanoxEswitchPlugin
+from neutron.tests import base
 
 
-class TestMlnxPluginConfig(testlib_api.SqlTestCase):
+class TestMlnxPluginConfig(base.BaseTestCase):
     expected_vlan_mappings = {'physnet1': [(1, 1000)],
                               'physnet2': [(1, 1000)]}
     expected_network_types = {'physnet1': constants.TYPE_ETH,
@@ -33,13 +33,15 @@ class TestMlnxPluginConfig(testlib_api.SqlTestCase):
 
     def setUp(self):
         super(TestMlnxPluginConfig, self).setUp()
+        cfg.CONF.set_override('rpc_backend',
+                              'neutron.openstack.common.rpc.impl_fake')
         cfg.CONF.set_override(group='MLNX',
                               name='network_vlan_ranges',
                               override=self.config_vlan_ranges)
 
     def _create_mlnx_plugin(self):
         with mock.patch('neutron.plugins.mlnx.db.mlnx_db_v2'):
-            return mlnx_plugin.MellanoxEswitchPlugin()
+            return MellanoxEswitchPlugin()
 
     def _assert_expected_config(self):
         plugin = self._create_mlnx_plugin()

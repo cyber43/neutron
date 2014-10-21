@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc.
 # All rights reserved.
 #
@@ -12,8 +14,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Kaiwei Fan, VMware, Inc
+#
 
-import abc
+from abc import abstractmethod
 
 from neutron.api import extensions
 from neutron.api.v2 import base
@@ -96,10 +101,10 @@ class Extensionattribute(extensions.ExtensionDescriptor):
 
 class ExtensionObjectTestPluginBase(object):
 
-    @abc.abstractmethod
+    @abstractmethod
     def create_ext_test_resource(self, context, router):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_ext_test_resource(self, context, id, fields=None):
         pass

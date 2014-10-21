@@ -16,15 +16,19 @@
 from eventlet import greenthread
 import mock
 
+from neutron.common import config as n_config
 from neutron.plugins.vmware.vshield.common import constants as vcns_const
-from neutron.plugins.vmware.vshield.tasks import constants as ts_const
+from neutron.plugins.vmware.vshield.common.constants import RouterStatus
+from neutron.plugins.vmware.vshield.tasks.constants import TaskState
+from neutron.plugins.vmware.vshield.tasks.constants import TaskStatus
 from neutron.plugins.vmware.vshield.tasks import tasks as ts
 from neutron.plugins.vmware.vshield import vcns_driver
 from neutron.tests import base
-from neutron.tests.unit import vmware
+from neutron.tests.unit.vmware import get_fake_conf
+from neutron.tests.unit.vmware import VCNS_NAME
 from neutron.tests.unit.vmware.vshield import fake_vcns
 
-VCNS_CONFIG_FILE = vmware.get_fake_conf("vcns.ini.test")
+VCNS_CONFIG_FILE = get_fake_conf("vcns.ini.test")
 
 ts.TaskManager.set_default_interval(100)
 
@@ -64,12 +68,12 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
 
         def _exec(task):
             if not _check_state(task, 1):
-                return ts_const.TaskStatus.ERROR
+                return TaskStatus.ERROR
 
             if task.userdata['sync_exec']:
-                return ts_const.TaskStatus.COMPLETED
+                return TaskStatus.COMPLETED
             else:
-                return ts_const.TaskStatus.PENDING
+                return TaskStatus.PENDING
 
         def _status(task):
             if task.userdata['sync_exec']:
@@ -78,10 +82,10 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
             state = task.userdata['state']
             if state == 3:
                 _check_state(task, 3)
-                return ts_const.TaskStatus.PENDING
+                return TaskStatus.PENDING
             else:
                 _check_state(task, 4)
-                return ts_const.TaskStatus.COMPLETED
+                return TaskStatus.COMPLETED
 
         def _result(task):
             if task.userdata['sync_exec']:
@@ -119,7 +123,7 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
 
         self.manager.add(task)
 
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
 
         self.assertTrue(userdata['result'])
 
@@ -136,10 +140,10 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
 
         def _exec(task):
             task.userdata['executed'] = True
-            return ts_const.TaskStatus.PENDING
+            return TaskStatus.PENDING
 
         def _status(task):
-            return ts_const.TaskStatus.COMPLETED
+            return TaskStatus.COMPLETED
 
         def _result(task):
             next_task = task.userdata.get('next')
@@ -164,7 +168,7 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
         for task in tasks:
             self.manager.add(task)
 
-        last_task.wait(ts_const.TaskState.RESULT)
+        last_task.wait(TaskState.RESULT)
 
         for task in tasks:
             self.assertTrue(task.userdata['result'])
@@ -174,17 +178,17 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
 
         def _exec(task):
             task.userdata['executed'] = True
-            return ts_const.TaskStatus.PENDING
+            return TaskStatus.PENDING
 
         def _status(task):
             for t in tasks:
                 if not t.userdata.get('executed'):
                     t.userdata['resut'] = False
-            return ts_const.TaskStatus.COMPLETED
+            return TaskStatus.COMPLETED
 
         def _result(task):
             if (task.userdata.get('result') is None and
-                task.status == ts_const.TaskStatus.COMPLETED):
+                task.status == TaskStatus.COMPLETED):
                 task.userdata['result'] = True
             else:
                 task.userdata['result'] = False
@@ -197,7 +201,7 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
             self.manager.add(task)
 
         for task in tasks:
-            task.wait(ts_const.TaskState.RESULT)
+            task.wait(TaskState.RESULT)
             self.assertTrue(task.userdata['result'])
 
     def _test_task_manager_stop(self, exec_wait=False, result_wait=False,
@@ -205,11 +209,11 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
         def _exec(task):
             if exec_wait:
                 greenthread.sleep(0.01)
-            return ts_const.TaskStatus.PENDING
+            return TaskStatus.PENDING
 
         def _status(task):
             greenthread.sleep(0.01)
-            return ts_const.TaskStatus.PENDING
+            return TaskStatus.PENDING
 
         def _result(task):
             if result_wait:
@@ -241,7 +245,7 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
 
         for res, tasks in alltasks.iteritems():
             for task in tasks:
-                self.assertEqual(task.status, ts_const.TaskStatus.ABORT)
+                self.assertEqual(task.status, TaskStatus.ABORT)
 
     def test_task_manager_stop_1(self):
         self._test_task_manager_stop(True, True, 0)
@@ -261,7 +265,7 @@ class VcnsDriverTaskManagerTestCase(base.BaseTestCase):
             while not task.userdata['tested']:
                 greenthread.sleep(0)
             task.userdata['executing'] = False
-            return ts_const.TaskStatus.COMPLETED
+            return TaskStatus.COMPLETED
 
         userdata = {
             'executing': False,
@@ -311,13 +315,14 @@ class VcnsDriverTestCase(base.BaseTestCase):
     def setUp(self):
         super(VcnsDriverTestCase, self).setUp()
 
-        self.config_parse(args=['--config-file', VCNS_CONFIG_FILE])
+        n_config.parse(['--config-file', VCNS_CONFIG_FILE])
 
         self.fc = fake_vcns.FakeVcns()
-        self.mock_vcns = mock.patch(vmware.VCNS_NAME, autospec=True)
+        self.mock_vcns = mock.patch(VCNS_NAME, autospec=True)
         self.vcns_patch()
 
         self.addCleanup(self.fc.reset_all)
+        self.addCleanup(self.mock_vcns.stop)
 
         self.vcns_driver = vcns_driver.VcnsDriver(self)
 
@@ -335,46 +340,46 @@ class VcnsDriverTestCase(base.BaseTestCase):
         task = self.vcns_driver.deploy_edge(
             'router-id', 'myedge', 'internal-network', {}, wait_for_exec=True)
         self.assertEqual(self.edge_id, 'edge-1')
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         return task
 
     def edge_deploy_started(self, task):
         self.edge_id = task.userdata['edge_id']
 
     def edge_deploy_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['edge_deploy_result'] = True
 
     def edge_delete_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['edge_delete_result'] = True
 
     def snat_create_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['snat_create_result'] = True
 
     def snat_delete_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['snat_delete_result'] = True
 
     def dnat_create_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['dnat_create_result'] = True
 
     def dnat_delete_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['dnat_delete_result'] = True
 
     def nat_update_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['nat_update_result'] = True
 
     def routes_update_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['routes_update_result'] = True
 
     def interface_update_result(self, task):
-        if task.status == ts_const.TaskStatus.COMPLETED:
+        if task.status == TaskStatus.COMPLETED:
             task.userdata['jobdata']['interface_update_result'] = True
 
     def test_deploy_edge(self):
@@ -383,8 +388,8 @@ class VcnsDriverTestCase(base.BaseTestCase):
             'router-id', 'myedge', 'internal-network', jobdata=jobdata,
             wait_for_exec=True)
         self.assertEqual(self.edge_id, 'edge-1')
-        task.wait(ts_const.TaskState.RESULT)
-        self.assertEqual(task.status, ts_const.TaskStatus.COMPLETED)
+        task.wait(TaskState.RESULT)
+        self.assertEqual(task.status, TaskStatus.COMPLETED)
         self.assertTrue(jobdata.get('edge_deploy_result'))
 
     def test_deploy_edge_fail(self):
@@ -392,14 +397,14 @@ class VcnsDriverTestCase(base.BaseTestCase):
             'router-1', 'myedge', 'internal-network', {}, wait_for_exec=True)
         task2 = self.vcns_driver.deploy_edge(
             'router-2', 'myedge', 'internal-network', {}, wait_for_exec=True)
-        task1.wait(ts_const.TaskState.RESULT)
-        task2.wait(ts_const.TaskState.RESULT)
-        self.assertEqual(task2.status, ts_const.TaskStatus.ERROR)
+        task1.wait(TaskState.RESULT)
+        task2.wait(TaskState.RESULT)
+        self.assertEqual(task2.status, TaskStatus.ERROR)
 
     def test_get_edge_status(self):
         self._deploy_edge()
         status = self.vcns_driver.get_edge_status(self.edge_id)
-        self.assertEqual(status, vcns_const.RouterStatus.ROUTER_STATUS_ACTIVE)
+        self.assertEqual(status, RouterStatus.ROUTER_STATUS_ACTIVE)
 
     def test_get_edges(self):
         self._deploy_edge()
@@ -421,7 +426,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
             task = self.vcns_driver.create_dnat_rule(
                 'router-id', edge_id, org, translated, jobdata=jobdata)
             key = 'dnat_create_result'
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get(key))
 
     def _delete_nat_rule(self, edge_id, action, addr):
@@ -434,7 +439,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
             task = self.vcns_driver.delete_dnat_rule(
                 'router-id', edge_id, addr, jobdata=jobdata)
             key = 'dnat_delete_result'
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get(key))
 
     def _test_create_nat_rule(self, action):
@@ -505,7 +510,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
         ]
         task = self.vcns_driver.update_nat_rules(
             'router-id', self.edge_id, snats, dnats, jobdata=jobdata)
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get('nat_update_result'))
 
         natcfg = self.vcns_driver.get_nat_config(self.edge_id)
@@ -549,7 +554,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
         ]
         task = self.vcns_driver.update_routes(
             'router-id', self.edge_id, '10.0.0.1', routes, jobdata=jobdata)
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get('routes_update_result'))
 
     def test_update_interface(self):
@@ -559,7 +564,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
             'router-id', self.edge_id, vcns_const.EXTERNAL_VNIC_INDEX,
             'network-id', address='100.0.0.3', netmask='255.255.255.0',
             jobdata=jobdata)
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get('interface_update_result'))
 
     def test_delete_edge(self):
@@ -567,7 +572,7 @@ class VcnsDriverTestCase(base.BaseTestCase):
         jobdata = {}
         task = self.vcns_driver.delete_edge(
             'router-id', self.edge_id, jobdata=jobdata)
-        task.wait(ts_const.TaskState.RESULT)
+        task.wait(TaskState.RESULT)
         self.assertTrue(jobdata.get('edge_delete_result'))
 
     def test_create_lswitch(self):

@@ -18,6 +18,11 @@
 Cisco Nexus-OS XML-based configuration snippets.
 """
 
+import logging
+
+
+LOG = logging.getLogger(__name__)
+
 
 # The following are standard strings, messages used to communicate with Nexus.
 EXEC_CONF_SNIPPET = """
@@ -80,7 +85,7 @@ CMD_NO_VLAN_CONF_SNIPPET = """
 
 CMD_INT_VLAN_HEADER = """
           <interface>
-            <%s>
+            <ethernet>
               <interface>%s</interface>
               <__XML__MODE_if-ethernet-switch>
                 <switchport>
@@ -101,7 +106,7 @@ CMD_INT_VLAN_TRAILER = """
                   </trunk>
                 </switchport>
               </__XML__MODE_if-ethernet-switch>
-            </%s>
+            </ethernet>
           </interface>
 """
 
@@ -115,7 +120,7 @@ CMD_INT_VLAN_ADD_SNIPPET = (CMD_INT_VLAN_HEADER +
 
 CMD_PORT_TRUNK = """
           <interface>
-            <%s>
+            <ethernet>
               <interface>%s</interface>
               <__XML__MODE_if-ethernet-switch>
                 <switchport></switchport>
@@ -126,13 +131,13 @@ CMD_PORT_TRUNK = """
                   </mode>
                 </switchport>
               </__XML__MODE_if-ethernet-switch>
-            </%s>
+            </ethernet>
           </interface>
 """
 
 CMD_NO_SWITCHPORT = """
           <interface>
-            <%s>
+            <ethernet>
               <interface>%s</interface>
               <__XML__MODE_if-ethernet-switch>
                 <no>
@@ -140,13 +145,13 @@ CMD_NO_SWITCHPORT = """
                   </switchport>
                 </no>
               </__XML__MODE_if-ethernet-switch>
-            </%s>
+            </ethernet>
           </interface>
 """
 
 CMD_NO_VLAN_INT_SNIPPET = """
           <interface>
-            <%s>
+            <ethernet>
               <interface>%s</interface>
               <__XML__MODE_if-ethernet-switch>
                 <switchport></switchport>
@@ -162,7 +167,7 @@ CMD_NO_VLAN_INT_SNIPPET = """
                   </trunk>
                 </switchport>
               </__XML__MODE_if-ethernet-switch>
-            </%s>
+            </ethernet>
           </interface>
 """
 

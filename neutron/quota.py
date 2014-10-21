@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 #    Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -20,6 +22,7 @@ from oslo.config import cfg
 import webob
 
 from neutron.common import exceptions
+from neutron.common import legacy
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
@@ -55,6 +58,7 @@ quota_opts = [
 ]
 # Register the configuration options
 cfg.CONF.register_opts(quota_opts, 'QUOTAS')
+legacy.override_config(cfg.CONF, [('QUOTAS', 'quota_driver', 'neutron.quota')])
 
 
 class ConfDriver(object):

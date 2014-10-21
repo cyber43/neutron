@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -40,9 +42,16 @@ class OvsdbMonitor(async_process.AsyncProcess):
         data = self._process.stdout.readline()
         if not data:
             return
-        self._stdout_lines.put(data)
-        LOG.debug(_('Output received from ovsdb monitor: %s') % data)
-        return data
+        #TODO(marun) The default root helper outputs exit errors to
+        # stdout due to bug #1219530.  This check can be moved to
+        # _read_stderr once the error is correctly output to stderr.
+        if self.root_helper and self.root_helper in data:
+            self._stderr_lines.put(data)
+            LOG.error(_('Error received from ovsdb monitor: %s') % data)
+        else:
+            self._stdout_lines.put(data)
+            LOG.debug(_('Output received from ovsdb monitor: %s') % data)
+            return data
 
     def _read_stderr(self):
         data = super(OvsdbMonitor, self)._read_stderr()
@@ -90,9 +99,9 @@ class SimpleInterfaceMonitor(OvsdbMonitor):
     def start(self, block=False, timeout=5):
         super(SimpleInterfaceMonitor, self).start()
         if block:
-            with eventlet.timeout.Timeout(timeout):
-                while not self.is_active:
-                    eventlet.sleep()
+            eventlet.timeout.Timeout(timeout)
+            while not self.is_active:
+                eventlet.sleep()
 
     def _kill(self, *args, **kwargs):
         self.data_received = False

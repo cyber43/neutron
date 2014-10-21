@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -16,26 +18,22 @@
 """
 Policy engine for neutron.  Largely copied from nova.
 """
-
-import collections
 import itertools
-import logging
 import re
 
 from oslo.config import cfg
 
 from neutron.api.v2 import attributes
-from neutron.common import constants as const
 from neutron.common import exceptions
 import neutron.common.utils as utils
+from neutron import manager
 from neutron.openstack.common import excutils
-from neutron.openstack.common.gettextutils import _LE, _LI, _LW
 from neutron.openstack.common import importutils
-from neutron.openstack.common import log
+from neutron.openstack.common import log as logging
 from neutron.openstack.common import policy
 
 
-LOG = log.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 _POLICY_PATH = None
 _POLICY_CACHE = {}
 ADMIN_CTX_POLICY = 'context_is_admin'
@@ -95,8 +93,8 @@ def _set_rules(data):
     for pol in policies.keys():
         if any([pol.startswith(depr_pol) for depr_pol in
                 DEPRECATED_POLICY_MAP.keys()]):
-            LOG.warn(_LW("Found deprecated policy rule:%s. Please consider "
-                         "upgrading your policy configuration file"), pol)
+            LOG.warn(_("Found deprecated policy rule:%s. Please consider "
+                       "upgrading your policy configuration file"), pol)
             pol_name, action = pol.rsplit(':', 1)
             try:
                 new_actions = DEPRECATED_ACTION_MAP[action]
@@ -107,41 +105,26 @@ def _set_rules(data):
                                                         new_policies)]:
                     if actual_policy not in policies:
                         # New policy, same rule
-                        LOG.info(_LI("Inserting policy:%(new_policy)s in "
-                                     "place of deprecated "
-                                     "policy:%(old_policy)s"),
+                        LOG.info(_("Inserting policy:%(new_policy)s in place "
+                                   "of deprecated policy:%(old_policy)s"),
                                  {'new_policy': actual_policy,
                                   'old_policy': pol})
                         policies[actual_policy] = policies[pol]
                 # Remove old-style policy
                 del policies[pol]
             except KeyError:
-                LOG.error(_LE("Backward compatibility unavailable for "
-                              "deprecated policy %s. The policy will "
-                              "not be enforced"), pol)
+                LOG.error(_("Backward compatibility unavailable for "
+                            "deprecated policy %s. The policy will "
+                            "not be enforced"), pol)
     policy.set_rules(policies)
 
 
-def _is_attribute_explicitly_set(attribute_name, resource, target, action):
-    """Verify that an attribute is present and is explicitly set."""
-    if 'update' in action:
-        # In the case of update, the function should not pay attention to a
-        # default value of an attribute, but check whether it was explicitly
-        # marked as being updated instead.
-        return (attribute_name in target[const.ATTRIBUTES_TO_UPDATE] and
-                target[attribute_name] is not attributes.ATTR_NOT_SPECIFIED)
+def _is_attribute_explicitly_set(attribute_name, resource, target):
+    """Verify that an attribute is present and has a non-default value."""
     return ('default' in resource[attribute_name] and
             attribute_name in target and
             target[attribute_name] is not attributes.ATTR_NOT_SPECIFIED and
             target[attribute_name] != resource[attribute_name]['default'])
-
-
-def _should_validate_sub_attributes(attribute, sub_attr):
-    """Verify that sub-attributes are iterable and should be validated."""
-    validate = attribute.get('validate')
-    return (validate and isinstance(sub_attr, collections.Iterable) and
-            any([k.startswith('type:dict') and
-                 v for (k, v) in validate.iteritems()]))
 
 
 def _build_subattr_match_rule(attr_name, attr, action, target):
@@ -152,7 +135,7 @@ def _build_subattr_match_rule(attr_name, attr, action, target):
     validate = attr['validate']
     key = filter(lambda k: k.startswith('type:dict'), validate.keys())
     if not key:
-        LOG.warn(_LW("Unable to find data type descriptor for attribute %s"),
+        LOG.warn(_("Unable to find data type descriptor for attribute %s"),
                  attr_name)
         return
     data = validate[key[0]]
@@ -169,16 +152,6 @@ def _build_subattr_match_rule(attr_name, attr, action, target):
     return policy.AndCheck(sub_attr_rules)
 
 
-def _process_rules_list(rules, match_rule):
-    """Recursively walk a policy rule to extract a list of match entries."""
-    if isinstance(match_rule, policy.RuleCheck):
-        rules.append(match_rule.match)
-    elif isinstance(match_rule, policy.AndCheck):
-        for rule in match_rule.rules:
-            _process_rules_list(rules, rule)
-    return rules
-
-
 def _build_match_rule(action, target):
     """Create the rule to match for a given action.
 
@@ -191,6 +164,7 @@ def _build_match_rule(action, target):
        action is being executed
        (e.g.: create_router:external_gateway_info:network_id)
     """
+
     match_rule = policy.RuleCheck('rule', action)
     resource, is_write = get_resource_and_action(action)
     # Attribute-based checks shall not be enforced on GETs
@@ -201,24 +175,21 @@ def _build_match_rule(action, target):
             for attribute_name in res_map[resource]:
                 if _is_attribute_explicitly_set(attribute_name,
                                                 res_map[resource],
-                                                target, action):
+                                                target):
                     attribute = res_map[resource][attribute_name]
                     if 'enforce_policy' in attribute:
                         attr_rule = policy.RuleCheck('rule', '%s:%s' %
                                                      (action, attribute_name))
-                        # Build match entries for sub-attributes
-                        if _should_validate_sub_attributes(
-                                attribute, target[attribute_name]):
+                        # Build match entries for sub-attributes, if present
+                        validate = attribute.get('validate')
+                        if (validate and any([k.startswith('type:dict') and v
+                                              for (k, v) in
+                                              validate.iteritems()])):
                             attr_rule = policy.AndCheck(
                                 [attr_rule, _build_subattr_match_rule(
                                     attribute_name, attribute,
                                     action, target)])
                         match_rule = policy.AndCheck([match_rule, attr_rule])
-    # Check that the logger has a DEBUG log level
-    if (cfg.CONF.debug and LOG.logger.level == logging.NOTSET or
-            LOG.logger.level == logging.DEBUG):
-        rules = _process_rules_list([], match_rule)
-        LOG.debug("Enforcing rules: %s", rules)
     return match_rule
 
 
@@ -293,9 +264,6 @@ class OwnerCheck(policy.Check):
             # resource is handled by the core plugin. It might be worth
             # having a way to map resources to plugins so to make this
             # check more general
-            # FIXME(ihrachys): if import is put in global, circular
-            # import failure occurs
-            from neutron import manager
             f = getattr(manager.NeutronManager.get_instance().plugin,
                         'get_%s' % parent_res)
             # f *must* exist, if not found it is better to let neutron
@@ -308,8 +276,7 @@ class OwnerCheck(policy.Check):
                 target[self.target_field] = data[parent_field]
             except Exception:
                 with excutils.save_and_reraise_exception():
-                    LOG.exception(_LE('Policy check error while calling %s!'),
-                                  f)
+                    LOG.exception(_('Policy check error while calling %s!'), f)
         match = self.match % target
         if self.kind in creds:
             return match == unicode(creds[self.kind])
@@ -350,6 +317,7 @@ class FieldCheck(policy.Check):
 
 def _prepare_check(context, action, target):
     """Prepare rule, target, and credentials for the policy engine."""
+    init()
     # Compare with None to distinguish case in which target is {}
     if target is None:
         target = {}
@@ -358,7 +326,7 @@ def _prepare_check(context, action, target):
     return match_rule, target, credentials
 
 
-def check(context, action, target, plugin=None, might_not_exist=False):
+def check(context, action, target, plugin=None):
     """Verifies that the action is valid on the target in this context.
 
     :param context: neutron context
@@ -369,14 +337,25 @@ def check(context, action, target, plugin=None, might_not_exist=False):
         location of the object e.g. ``{'project_id': context.project_id}``
     :param plugin: currently unused and deprecated.
         Kept for backward compatibility.
-    :param might_not_exist: If True the policy check is skipped (and the
-        function returns True) if the specified policy does not exist.
-        Defaults to false.
 
     :return: Returns True if access is permitted else False.
     """
-    if might_not_exist and not (policy._rules and action in policy._rules):
-        return True
+    return policy.check(*(_prepare_check(context, action, target)))
+
+
+def check_if_exists(context, action, target):
+    """Verify if the action can be authorized, and raise if it is unknown.
+
+    Check whether the action can be performed on the target within this
+    context, and raise a PolicyRuleNotFound exception if the action is
+    not defined in the policy engine.
+    """
+    # TODO(salvatore-orlando): Consider modifying oslo policy engine in
+    # order to allow to raise distinct exception when check fails and
+    # when policy is missing
+    # Raise if there's no match for requested action in the policy engine
+    if not policy._rules or action not in policy._rules:
+        raise exceptions.PolicyRuleNotFound(rule=action)
     return policy.check(*(_prepare_check(context, action, target)))
 
 
@@ -395,6 +374,7 @@ def enforce(context, action, target, plugin=None):
     :raises neutron.exceptions.PolicyNotAuthorized: if verification fails.
     """
 
+    init()
     rule, target, credentials = _prepare_check(context, action, target)
     result = policy.check(rule, target, credentials, action=action)
     if not result:

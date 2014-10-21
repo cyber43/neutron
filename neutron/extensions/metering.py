@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -49,16 +51,13 @@ RESOURCE_ATTRIBUTE_MAP = {
         'id': {'allow_post': False, 'allow_put': False,
                'is_visible': True,
                'primary_key': True},
-        'name': {'allow_post': True, 'allow_put': False,
+        'name': {'allow_post': True, 'allow_put': True,
                  'is_visible': True, 'default': ''},
-        'description': {'allow_post': True, 'allow_put': False,
+        'description': {'allow_post': True, 'allow_put': True,
                         'is_visible': True, 'default': ''},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'required_by_policy': True,
-                      'is_visible': True},
-        'shared': {'allow_post': True, 'allow_put': False,
-                   'is_visible': True, 'default': False,
-                   'convert_to': attr.convert_to_boolean}
+                      'is_visible': True}
     },
     'metering_label_rules': {
         'id': {'allow_post': False, 'allow_put': False,
@@ -67,10 +66,10 @@ RESOURCE_ATTRIBUTE_MAP = {
         'metering_label_id': {'allow_post': True, 'allow_put': False,
                               'validate': {'type:uuid': None},
                               'is_visible': True, 'required_by_policy': True},
-        'direction': {'allow_post': True, 'allow_put': False,
+        'direction': {'allow_post': True, 'allow_put': True,
                       'is_visible': True,
                       'validate': {'type:values': ['ingress', 'egress']}},
-        'excluded': {'allow_post': True, 'allow_put': False,
+        'excluded': {'allow_post': True, 'allow_put': True,
                      'is_visible': True, 'default': False,
                      'convert_to': attr.convert_to_boolean},
         'remote_ip_prefix': {'allow_post': True, 'allow_put': False,

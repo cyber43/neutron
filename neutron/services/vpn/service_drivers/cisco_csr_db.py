@@ -11,8 +11,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Paul Michali, Cisco Systems, Inc.
 
-from oslo.db import exception as db_exc
 import sqlalchemy as sa
 from sqlalchemy.orm import exc as sql_exc
 
@@ -20,7 +21,7 @@ from neutron.common import exceptions
 from neutron.db import model_base
 from neutron.db import models_v2
 from neutron.db.vpn import vpn_db
-from neutron.openstack.common.gettextutils import _LI
+from neutron.openstack.common.db import exception as db_exc
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -157,10 +158,10 @@ def determine_csr_policy_id(policy_type, conn_policy_field, map_policy_field,
     then call lookup_policy() to find the current mapping for that ID.
     """
     csr_id = get_next_available_id(session, map_policy_field, policy_type)
-    LOG.debug("Reserved new CSR ID %(csr_id)d for %(policy)s "
-              "ID %(policy_id)s", {'csr_id': csr_id,
-                                   'policy': policy_type,
-                                   'policy_id': policy_id})
+    LOG.debug(_("Reserved new CSR ID %(csr_id)d for %(policy)s "
+                "ID %(policy_id)s"), {'csr_id': csr_id,
+                                      'policy': policy_type,
+                                      'policy_id': policy_id})
     return csr_id
 
 
@@ -184,9 +185,9 @@ def get_tunnel_mapping_for(conn_id, session):
     try:
         entry = session.query(IdentifierMap).filter_by(
             ipsec_site_conn_id=conn_id).one()
-        LOG.debug("Mappings for IPSec connection %(conn)s - "
-                  "tunnel=%(tunnel)s ike_policy=%(csr_ike)d "
-                  "ipsec_policy=%(csr_ipsec)d",
+        LOG.debug(_("Mappings for IPSec connection %(conn)s - "
+                    "tunnel=%(tunnel)s ike_policy=%(csr_ike)d "
+                    "ipsec_policy=%(csr_ipsec)d"),
                   {'conn': conn_id, 'tunnel': entry.csr_tunnel_id,
                    'csr_ike': entry.csr_ike_policy_id,
                    'csr_ipsec': entry.csr_ipsec_policy_id})
@@ -223,9 +224,9 @@ def create_tunnel_mapping(context, conn_info):
             msg = _("Attempt to create duplicate entry in Cisco CSR "
                     "mapping table for connection %s") % conn_id
             raise CsrInternalError(reason=msg)
-        LOG.info(_LI("Mapped connection %(conn_id)s to Tunnel%(tunnel_id)d "
-                     "using IKE policy ID %(ike_id)d and IPSec policy "
-                     "ID %(ipsec_id)d"),
+        LOG.info(_("Mapped connection %(conn_id)s to Tunnel%(tunnel_id)d "
+                   "using IKE policy ID %(ike_id)d and IPSec policy "
+                   "ID %(ipsec_id)d"),
                  {'conn_id': conn_id, 'tunnel_id': csr_tunnel_id,
                   'ike_id': csr_ike_id, 'ipsec_id': csr_ipsec_id})
 
@@ -235,4 +236,4 @@ def delete_tunnel_mapping(context, conn_info):
     with context.session.begin():
         sess_qry = context.session.query(IdentifierMap)
         sess_qry.filter_by(ipsec_site_conn_id=conn_id).delete()
-    LOG.info(_LI("Removed mapping for connection %s"), conn_id)
+    LOG.info(_("Removed mapping for connection %s"), conn_id)

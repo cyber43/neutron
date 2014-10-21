@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2011 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -13,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from six import moves
+from six.moves import xrange
 import sqlalchemy
 from sqlalchemy.orm.properties import RelationshipProperty
 
@@ -88,7 +90,7 @@ def paginate_query(query, model, limit, sorts, marker_obj=None):
         criteria_list = []
         for i, sort in enumerate(sorts):
             crit_attrs = [(getattr(model, sorts[j][0]) == marker_values[j])
-                          for j in moves.xrange(i)]
+                          for j in xrange(i)]
             model_attr = getattr(model, sort[0])
             if sort[1]:
                 crit_attrs.append((model_attr > marker_values[i]))

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2011 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -13,16 +15,17 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import sys
+
 from oslo.config import cfg
 import webob
 
 from neutron.api import extensions
-from neutron.api.v2 import attributes
+from neutron.api.v2.attributes import convert_to_int
 from neutron.api.v2 import base
 from neutron.api.v2 import resource
-from neutron.common import constants as const
 from neutron.common import exceptions as n_exc
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.openstack.common import importutils
 from neutron import quota
 from neutron import wsgi
@@ -50,12 +53,12 @@ class QuotaSetsController(wsgi.Controller):
     def _update_attributes(self):
         for quota_resource in QUOTAS.resources.iterkeys():
             attr_dict = EXTENDED_ATTRIBUTES_2_0[RESOURCE_COLLECTION]
-            attr_dict[quota_resource] = {
-                'allow_post': False,
-                'allow_put': True,
-                'convert_to': attributes.convert_to_int,
-                'validate': {'type:range': [-1, const.DB_INTEGER_MAX_VALUE]},
-                'is_visible': True}
+            attr_dict[quota_resource] = {'allow_post': False,
+                                         'allow_put': True,
+                                         'convert_to': convert_to_int,
+                                         'validate': {'type:range':
+                                                      [-1, sys.maxsize]},
+                                         'is_visible': True}
         self._update_extended_attributes = False
 
     def _get_quotas(self, request, tenant_id):
@@ -82,7 +85,7 @@ class QuotaSetsController(wsgi.Controller):
     def show(self, request, id):
         if id != request.context.tenant_id:
             self._check_admin(request.context,
-                              reason=_("Only admin is authorized "
+                              reason=_("Non-admin is not authorised "
                                        "to access quotas for another tenant"))
         return {self._resource_name: self._get_quotas(request, id)}
 
@@ -137,7 +140,7 @@ class Quotasv2(extensions.ExtensionDescriptor):
     def get_resources(cls):
         """Returns Ext Resources."""
         controller = resource.Resource(
-            QuotaSetsController(manager.NeutronManager.get_plugin()),
+            QuotaSetsController(NeutronManager.get_plugin()),
             faults=base.FAULT_MAP)
         return [extensions.ResourceExtension(
             Quotasv2.get_alias(),

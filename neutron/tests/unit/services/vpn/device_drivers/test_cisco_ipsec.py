@@ -11,10 +11,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Paul Michali, Cisco Systems, Inc.
 
-import copy
 import httplib
-import operator
+import os
+import tempfile
 
 import mock
 
@@ -71,11 +73,11 @@ class TestCiscoCsrIPSecConnection(base.BaseTestCase):
             'cisco': {'site_conn_id': 'Tunnel0',
                       'ike_policy_id': 222,
                       'ipsec_policy_id': 333,
+                      # TODO(pcm) FUTURE use vpnservice['external_ip']
                       'router_public_ip': '172.24.4.23'}
         }
         self.csr = mock.Mock(spec=csr_client.CsrRestClient)
         self.csr.status = 201  # All calls to CSR REST API succeed
-        self.csr.tunnel_ip = '172.24.4.23'
         self.ipsec_conn = ipsec_driver.CiscoCsrIPSecConnection(self.conn_info,
                                                                self.csr)
 
@@ -125,7 +127,7 @@ class TestCiscoCsrIPSecConnection(base.BaseTestCase):
         steps are called in reverse order. At the end, there should be no
         rollback infromation for the connection.
         """
-        def fake_route_check_fails(*args):
+        def fake_route_check_fails(*args, **kwargs):
             if args[0] == 'Static Route':
                 # So that subsequent calls to CSR rest client (for rollback)
                 # will fake as passing.
@@ -181,36 +183,8 @@ class TestCiscoCsrIPSecConnection(base.BaseTestCase):
             self.fail('Expected exception with invalid delete step')
 
     def test_delete_ipsec_connection(self):
-        """Perform delete of IPSec site connection and check steps done."""
-        # Simulate that a create was done with rollback steps stored
-        self.ipsec_conn.steps = [
-            ipsec_driver.RollbackStep(action='pre_shared_key',
-                                      resource_id='123',
-                                      title='Pre-Shared Key'),
-            ipsec_driver.RollbackStep(action='ike_policy',
-                                      resource_id=222,
-                                      title='IKE Policy'),
-            ipsec_driver.RollbackStep(action='ipsec_policy',
-                                      resource_id=333,
-                                      title='IPSec Policy'),
-            ipsec_driver.RollbackStep(action='ipsec_connection',
-                                      resource_id='Tunnel0',
-                                      title='IPSec Connection'),
-            ipsec_driver.RollbackStep(action='static_route',
-                                      resource_id='10.1.0.0_24_Tunnel0',
-                                      title='Static Route'),
-            ipsec_driver.RollbackStep(action='static_route',
-                                      resource_id='10.2.0.0_24_Tunnel0',
-                                      title='Static Route')]
-        expected = ['delete_static_route',
-                    'delete_static_route',
-                    'delete_ipsec_connection',
-                    'delete_ipsec_policy',
-                    'delete_ike_policy',
-                    'delete_pre_shared_key']
-        self.ipsec_conn.delete_ipsec_site_connection(mock.Mock(), 123)
-        client_calls = [c[0] for c in self.csr.method_calls]
-        self.assertEqual(expected, client_calls)
+        # TODO(pcm) implement
+        pass
 
 
 class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
@@ -242,12 +216,11 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
             'cisco': {'site_conn_id': 'Tunnel0',
                       'ike_policy_id': 222,
                       'ipsec_policy_id': 333,
+                      # TODO(pcm) get from vpnservice['external_ip']
                       'router_public_ip': '172.24.4.23'}
         }
-        self.csr = mock.Mock(spec=csr_client.CsrRestClient)
-        self.csr.tunnel_ip = '172.24.4.23'
         self.ipsec_conn = ipsec_driver.CiscoCsrIPSecConnection(self.conn_info,
-                                                               self.csr)
+                                                               mock.Mock())
 
     def test_invalid_attribute(self):
         """Negative test of unknown attribute - programming error."""
@@ -286,20 +259,6 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
                                                              self.conn_info)
         self.assertEqual(expected, policy_info)
 
-    def test_create_ike_policy_info_different_encryption(self):
-        """Ensure that IKE policy info is mapped/created correctly."""
-        self.conn_info['ike_policy']['encryption_algorithm'] = 'aes-192'
-        expected = {u'priority-id': 222,
-                    u'encryption': u'aes192',
-                    u'hash': u'sha',
-                    u'dhGroup': 5,
-                    u'version': u'v1',
-                    u'lifetime': 3600}
-        policy_id = self.conn_info['cisco']['ike_policy_id']
-        policy_info = self.ipsec_conn.create_ike_policy_info(policy_id,
-                                                             self.conn_info)
-        self.assertEqual(expected, policy_info)
-
     def test_create_ike_policy_info_non_defaults(self):
         """Ensure that IKE policy info with different values."""
         self.conn_info['ike_policy'] = {
@@ -311,7 +270,7 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
             'lifetime_value': 60
         }
         expected = {u'priority-id': 222,
-                    u'encryption': u'aes256',
+                    u'encryption': u'aes',  # TODO(pcm): fix
                     u'hash': u'sha',
                     u'dhGroup': 14,
                     u'version': u'v1',
@@ -322,11 +281,7 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
         self.assertEqual(expected, policy_info)
 
     def test_ipsec_policy_info(self):
-        """Ensure that IPSec policy info is mapped/created correctly.
-
-        Note: That although the default for anti-replay-window-size on the
-        CSR is 64, we force it to disabled, for OpenStack use.
-        """
+        """Ensure that IPSec policy info is mapped/created correctly."""
         expected = {u'policy-id': 333,
                     u'protection-suite': {
                         u'esp-encryption': u'esp-aes',
@@ -335,25 +290,7 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
                     },
                     u'lifetime-sec': 3600,
                     u'pfs': u'group5',
-                    u'anti-replay-window-size': u'disable'}
-        ipsec_policy_id = self.conn_info['cisco']['ipsec_policy_id']
-        policy_info = self.ipsec_conn.create_ipsec_policy_info(ipsec_policy_id,
-                                                               self.conn_info)
-        self.assertEqual(expected, policy_info)
-
-    def test_ipsec_policy_info_different_encryption(self):
-        """Create IPSec policy with different settings."""
-        self.conn_info['ipsec_policy']['transform_protocol'] = 'ah-esp'
-        self.conn_info['ipsec_policy']['encryption_algorithm'] = 'aes-192'
-        expected = {u'policy-id': 333,
-                    u'protection-suite': {
-                        u'esp-encryption': u'esp-192-aes',
-                        u'esp-authentication': u'esp-sha-hmac',
-                        u'ah': u'ah-sha-hmac'
-                    },
-                    u'lifetime-sec': 3600,
-                    u'pfs': u'group5',
-                    u'anti-replay-window-size': u'disable'}
+                    u'anti-replay-window-size': u'64'}
         ipsec_policy_id = self.conn_info['cisco']['ipsec_policy_id']
         policy_info = self.ipsec_conn.create_ipsec_policy_info(ipsec_policy_id,
                                                                self.conn_info)
@@ -366,8 +303,7 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
                                           'auth_algorithm': 'sha1',
                                           'pfs': 'group14',
                                           'lifetime_units': 'seconds',
-                                          'lifetime_value': 120,
-                                          'anti-replay-window-size': 'disable'}
+                                          'lifetime_value': 120}
         expected = {u'policy-id': 333,
                     u'protection-suite': {
                         u'esp-encryption': u'esp-3des',
@@ -375,7 +311,7 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
                     },
                     u'lifetime-sec': 120,
                     u'pfs': u'group14',
-                    u'anti-replay-window-size': u'disable'}
+                    u'anti-replay-window-size': u'64'}
         ipsec_policy_id = self.conn_info['cisco']['ipsec_policy_id']
         policy_info = self.ipsec_conn.create_ipsec_policy_info(ipsec_policy_id,
                                                                self.conn_info)
@@ -385,6 +321,10 @@ class TestCiscoCsrIPsecConnectionCreateTransforms(base.BaseTestCase):
         """Ensure site-to-site connection info is created/mapped correctly."""
         expected = {u'vpn-interface-name': 'Tunnel0',
                     u'ipsec-policy-id': 333,
+                    u'local-device': {
+                        u'ip-address': u'GigabitEthernet3',
+                        u'tunnel-ip-address': u'172.24.4.23'
+                    },
                     u'remote-device': {
                         u'tunnel-ip-address': '192.168.1.2'
                     },
@@ -418,13 +358,21 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
 
     def setUp(self):
         super(TestCiscoCsrIPsecDeviceDriverSyncStatuses, self).setUp()
-        for klass in ['neutron.common.rpc.create_connection',
+        for klass in ['neutron.openstack.common.rpc.create_connection',
                       'neutron.context.get_admin_context_without_session',
                       'neutron.openstack.common.'
                       'loopingcall.FixedIntervalLoopingCall']:
             mock.patch(klass).start()
         self.context = context.Context('some_user', 'some_tenant')
         self.agent = mock.Mock()
+        conf_patch = mock.patch('oslo.config.cfg.CONF').start()
+        conf_patch.config_file = ['dummy']
+        self.config_load = mock.patch(FIND_CFG_FOR_CSRS).start()
+        self.config_load.return_value = {'1.1.1.1': {'rest_mgmt': '2.2.2.2',
+                                                     'tunnel_ip': '1.1.1.3',
+                                                     'username': 'pe',
+                                                     'password': 'password',
+                                                     'timeout': 120}}
         self.driver = ipsec_driver.CiscoCsrIPsecDriver(self.agent, FAKE_HOST)
         self.driver.agent_rpc = mock.Mock()
         self.conn_create = mock.patch.object(
@@ -433,41 +381,14 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.conn_delete = mock.patch.object(
             ipsec_driver.CiscoCsrIPSecConnection,
             'delete_ipsec_site_connection').start()
-        self.admin_state = mock.patch.object(
-            ipsec_driver.CiscoCsrIPSecConnection,
-            'set_admin_state').start()
         self.csr = mock.Mock()
-        self.router_info = {u'router_info': {'rest_mgmt_ip': '2.2.2.2',
-                                             'tunnel_ip': '1.1.1.3',
-                                             'username': 'me',
-                                             'password': 'password',
-                                             'timeout': 120,
-                                             'external_ip': u'1.1.1.1'}}
+        self.driver.csrs['1.1.1.1'] = self.csr
         self.service123_data = {u'id': u'123',
                                 u'status': constants.DOWN,
-                                u'admin_state_up': False}
-        self.service123_data.update(self.router_info)
-        self.conn1_data = {u'id': u'1',
-                           u'status': constants.ACTIVE,
+                                u'admin_state_up': False,
+                                u'external_ip': u'1.1.1.1'}
+        self.conn1_data = {u'id': u'1', u'status': constants.ACTIVE,
                            u'admin_state_up': True,
-                           u'mtu': 1500,
-                           u'psk': u'secret',
-                           u'peer_address': '192.168.1.2',
-                           u'peer_cidrs': ['10.1.0.0/24', '10.2.0.0/24'],
-                           u'ike_policy': {
-                               u'auth_algorithm': u'sha1',
-                               u'encryption_algorithm': u'aes-128',
-                               u'pfs': u'Group5',
-                               u'ike_version': u'v1',
-                               u'lifetime_units': u'seconds',
-                               u'lifetime_value': 3600},
-                           u'ipsec_policy': {
-                               u'transform_protocol': u'ah',
-                               u'encryption_algorithm': u'aes-128',
-                               u'auth_algorithm': u'sha1',
-                               u'pfs': u'group5',
-                               u'lifetime_units': u'seconds',
-                               u'lifetime_value': 3600},
                            u'cisco': {u'site_conn_id': u'Tunnel0'}}
 
     # NOTE: For sync, there is mark (trivial), update (tested),
@@ -477,8 +398,9 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         """Notified of connection create request - create."""
         # Make the (existing) service
         self.driver.create_vpn_service(self.service123_data)
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'status'] = constants.PENDING_CREATE
+        conn_data = {u'id': u'1', u'status': constants.PENDING_CREATE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
 
         connection = self.driver.update_connection(self.context,
                                                    u'123', conn_data)
@@ -487,50 +409,17 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.assertEqual(constants.PENDING_CREATE, connection.last_status)
         self.assertEqual(1, self.conn_create.call_count)
 
-    def test_detect_no_change_to_ipsec_connection(self):
-        """No change to IPSec connection - nop."""
-        # Make existing service, and connection that was active
+    def test_update_ipsec_connection_changed_settings(self):
+        """Notified of connection changing config - update."""
+        # TODO(pcm) Place holder for this condition
+        # Make the (existing) service and connection
         vpn_service = self.driver.create_vpn_service(self.service123_data)
-        connection = vpn_service.create_connection(self.conn1_data)
-
-        self.assertFalse(connection.check_for_changes(self.conn1_data))
-
-    def test_detect_state_only_change_to_ipsec_connection(self):
-        """Only IPSec connection state changed - update."""
-        # Make existing service, and connection that was active
-        vpn_service = self.driver.create_vpn_service(self.service123_data)
-        connection = vpn_service.create_connection(self.conn1_data)
-
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'admin_state_up'] = False
-        self.assertFalse(connection.check_for_changes(conn_data))
-
-    def test_detect_non_state_change_to_ipsec_connection(self):
-        """Connection change instead of/in addition to state - update."""
-        # Make existing service, and connection that was active
-        vpn_service = self.driver.create_vpn_service(self.service123_data)
-        connection = vpn_service.create_connection(self.conn1_data)
-
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'ipsec_policy'][u'encryption_algorithm'] = u'aes-256'
-        self.assertTrue(connection.check_for_changes(conn_data))
-
-    def test_update_ipsec_connection_changed_admin_down(self):
-        """Notified of connection state change - update.
-
-        For a connection that was previously created, expect to
-        force connection down on an admin down (only) change.
-        """
-
-        # Make existing service, and connection that was active
-        vpn_service = self.driver.create_vpn_service(self.service123_data)
-        vpn_service.create_connection(self.conn1_data)
-
-        # Simulate that notification of connection update received
+        # TODO(pcm) add info that indicates that the connection has changed
+        conn_data = {u'id': u'1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
+        vpn_service.create_connection(conn_data)
         self.driver.mark_existing_connections_as_dirty()
-        # Modify the connection data for the 'sync'
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'admin_state_up'] = False
 
         connection = self.driver.update_connection(self.context,
                                                    '123', conn_data)
@@ -538,37 +427,7 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.assertEqual(u'Tunnel0', connection.tunnel)
         self.assertEqual(constants.ACTIVE, connection.last_status)
         self.assertFalse(self.conn_create.called)
-        self.assertFalse(connection.is_admin_up)
-        self.assertTrue(connection.forced_down)
-        self.assertEqual(1, self.admin_state.call_count)
-
-    def test_update_ipsec_connection_changed_config(self):
-        """Notified of connection changing config - update.
-
-        Goal here is to detect that the connection is deleted and then
-        created, but not that the specific values have changed, so picking
-        arbitrary value (MTU).
-        """
-        # Make existing service, and connection that was active
-        vpn_service = self.driver.create_vpn_service(self.service123_data)
-        vpn_service.create_connection(self.conn1_data)
-
-        # Simulate that notification of connection update received
-        self.driver.mark_existing_connections_as_dirty()
-        # Modify the connection data for the 'sync'
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'mtu'] = 9200
-
-        connection = self.driver.update_connection(self.context,
-                                                   '123', conn_data)
-        self.assertFalse(connection.is_dirty)
-        self.assertEqual(u'Tunnel0', connection.tunnel)
-        self.assertEqual(constants.ACTIVE, connection.last_status)
-        self.assertEqual(1, self.conn_create.call_count)
-        self.assertEqual(1, self.conn_delete.call_count)
-        self.assertTrue(connection.is_admin_up)
-        self.assertFalse(connection.forced_down)
-        self.assertFalse(self.admin_state.called)
+        # TODO(pcm) FUTURE - handling for update (delete/create?)
 
     def test_update_of_unknown_ipsec_connection(self):
         """Notified of update of unknown connection - create.
@@ -576,73 +435,107 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         Occurs if agent restarts and receives a notification of change
         to connection, but has no previous record of the connection.
         Result will be to rebuild the connection.
+
+        This can also happen, if a connection is changed from admin
+        down to admin up (so don't need a separate test for admin up.
         """
         # Will have previously created service, but don't know of connection
         self.driver.create_vpn_service(self.service123_data)
+        conn_data = {u'id': u'1', u'status': constants.DOWN,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
 
-        # Simulate that notification of connection update received
+        connection = self.driver.update_connection(self.context,
+                                                   u'123', conn_data)
+        self.assertFalse(connection.is_dirty)
+        self.assertEqual(u'Tunnel0', connection.tunnel)
+        self.assertEqual(constants.DOWN, connection.last_status)
+        self.assertEqual(1, self.conn_create.call_count)
+
+    def test_update_unchanged_ipsec_connection(self):
+        """Unchanged state for connection during sync - nop."""
+        # Make the (existing) service and connection
+        vpn_service = self.driver.create_vpn_service(self.service123_data)
+        conn_data = {u'id': u'1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
+        vpn_service.create_connection(conn_data)
         self.driver.mark_existing_connections_as_dirty()
-        conn_data = copy.deepcopy(self.conn1_data)
+        # The notification (state) hasn't changed for the connection
+
+        connection = self.driver.update_connection(self.context,
+                                                   '123', conn_data)
+        self.assertFalse(connection.is_dirty)
+        self.assertEqual(u'Tunnel0', connection.tunnel)
+        self.assertEqual(constants.ACTIVE, connection.last_status)
+        self.assertFalse(self.conn_create.called)
+
+    def test_update_connection_admin_down(self):
+        """Connection updated to admin down state - force down."""
+        # Make existing service, and connection that was active
+        vpn_service = self.driver.create_vpn_service(self.service123_data)
+        conn_data = {u'id': '1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
+        vpn_service.create_connection(conn_data)
+        self.driver.mark_existing_connections_as_dirty()
+        # Now simulate that the notification shows the connection admin down
+        conn_data[u'admin_state_up'] = False
         conn_data[u'status'] = constants.DOWN
 
         connection = self.driver.update_connection(self.context,
                                                    u'123', conn_data)
         self.assertFalse(connection.is_dirty)
+        self.assertTrue(connection.forced_down)
         self.assertEqual(u'Tunnel0', connection.tunnel)
         self.assertEqual(constants.DOWN, connection.last_status)
-        self.assertEqual(1, self.conn_create.call_count)
-        self.assertTrue(connection.is_admin_up)
-        self.assertFalse(connection.forced_down)
-        self.assertFalse(self.admin_state.called)
+        self.assertFalse(self.conn_create.called)
 
     def test_update_missing_connection_admin_down(self):
         """Connection not present is in admin down state - nop.
 
         If the agent has restarted, and a sync notification occurs with
-        a connection that is in admin down state, recreate the connection,
+        a connection that is in admin down state, create the structures,
         but indicate that the connection is down.
         """
         # Make existing service, but no connection
         self.driver.create_vpn_service(self.service123_data)
+        conn_data = {u'id': '1', u'status': constants.DOWN,
+                     u'admin_state_up': False,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
 
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data.update({u'status': constants.DOWN,
-                          u'admin_state_up': False})
         connection = self.driver.update_connection(self.context,
                                                    u'123', conn_data)
         self.assertIsNotNone(connection)
         self.assertFalse(connection.is_dirty)
-        self.assertEqual(1, self.conn_create.call_count)
         self.assertFalse(connection.is_admin_up)
         self.assertTrue(connection.forced_down)
-        self.assertEqual(1, self.admin_state.call_count)
+        self.assertFalse(self.conn_create.called)
 
     def test_update_connection_admin_up(self):
         """Connection updated to admin up state - record."""
         # Make existing service, and connection that was admin down
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data.update({u'status': constants.DOWN, u'admin_state_up': False})
+        conn_data = {u'id': '1', u'status': constants.DOWN,
+                     u'admin_state_up': False,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.DOWN,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data]}
-        service_data.update(self.router_info)
         self.driver.update_service(self.context, service_data)
-
-        # Simulate that notification of connection update received
         self.driver.mark_existing_connections_as_dirty()
         # Now simulate that the notification shows the connection admin up
-        new_conn_data = copy.deepcopy(conn_data)
-        new_conn_data[u'admin_state_up'] = True
+        conn_data[u'admin_state_up'] = True
+        conn_data[u'status'] = constants.DOWN
 
         connection = self.driver.update_connection(self.context,
-                                                   u'123', new_conn_data)
+                                                   u'123', conn_data)
         self.assertFalse(connection.is_dirty)
+        self.assertFalse(connection.forced_down)
         self.assertEqual(u'Tunnel0', connection.tunnel)
         self.assertEqual(constants.DOWN, connection.last_status)
-        self.assertTrue(connection.is_admin_up)
-        self.assertFalse(connection.forced_down)
-        self.assertEqual(2, self.admin_state.call_count)
+        self.assertEqual(1, self.conn_create.call_count)
 
     def test_update_for_vpn_service_create(self):
         """Creation of new IPSec connection on new VPN service - create.
@@ -650,13 +543,14 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         Service will be created and marked as 'clean', and update
         processing for connection will occur (create).
         """
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'status'] = constants.PENDING_CREATE
+        conn_data = {u'id': u'1', u'status': constants.PENDING_CREATE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.PENDING_CREATE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertFalse(vpn_service.is_dirty)
         self.assertEqual(constants.PENDING_CREATE, vpn_service.last_status)
@@ -666,22 +560,20 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.assertEqual(u'Tunnel0', connection.tunnel)
         self.assertEqual(constants.PENDING_CREATE, connection.last_status)
         self.assertEqual(1, self.conn_create.call_count)
-        self.assertTrue(connection.is_admin_up)
-        self.assertFalse(connection.forced_down)
-        self.assertFalse(self.admin_state.called)
 
     def test_update_for_new_connection_on_existing_service(self):
         """Creating a new IPSec connection on an existing service."""
         # Create the service before testing, and mark it dirty
         prev_vpn_service = self.driver.create_vpn_service(self.service123_data)
         self.driver.mark_existing_connections_as_dirty()
-        conn_data = copy.deepcopy(self.conn1_data)
-        conn_data[u'status'] = constants.PENDING_CREATE
+        conn_data = {u'id': u'1', u'status': constants.PENDING_CREATE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
         # Should reuse the entry and update the status
         self.assertEqual(prev_vpn_service, vpn_service)
@@ -702,15 +594,17 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         """
         # Create a service and add in a connection that is active
         prev_vpn_service = self.driver.create_vpn_service(self.service123_data)
-        prev_vpn_service.create_connection(self.conn1_data)
-
+        conn_data = {u'id': u'1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
+        prev_vpn_service.create_connection(conn_data)
         self.driver.mark_existing_connections_as_dirty()
         # Create notification with conn unchanged and service already created
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
-                        u'ipsec_conns': [self.conn1_data]}
-        service_data.update(self.router_info)
+                        u'ipsec_conns': [conn_data]}
         vpn_service = self.driver.update_service(self.context, service_data)
         # Should reuse the entry and update the status
         self.assertEqual(prev_vpn_service, vpn_service)
@@ -730,13 +624,15 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         """
         # Create an "existing" service, prior to notification
         prev_vpn_service = self.driver.create_vpn_service(self.service123_data)
-
         self.driver.mark_existing_connections_as_dirty()
+        conn_data = {u'id': u'1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.DOWN,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': False,
-                        u'ipsec_conns': [self.conn1_data]}
-        service_data.update(self.router_info)
+                        u'ipsec_conns': [conn_data]}
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertEqual(prev_vpn_service, vpn_service)
         self.assertFalse(vpn_service.is_dirty)
@@ -755,11 +651,14 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         of a service that is in the admin down state. Structures will be
         created, but forced down.
         """
+        conn_data = {u'id': u'1', u'status': constants.ACTIVE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.DOWN,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': False,
-                        u'ipsec_conns': [self.conn1_data]}
-        service_data.update(self.router_info)
+                        u'ipsec_conns': [conn_data]}
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertIsNotNone(vpn_service)
         self.assertFalse(vpn_service.is_dirty)
@@ -788,9 +687,9 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel1'}}
         service_data = {u'id': u'123',
                         u'status': constants.DOWN,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data1, conn_data2]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertEqual(prev_vpn_service, vpn_service)
         self.assertFalse(vpn_service.is_dirty)
@@ -819,9 +718,9 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                      u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertFalse(vpn_service.is_dirty)
         self.assertEqual(constants.ACTIVE, vpn_service.last_status)
@@ -831,6 +730,23 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.assertEqual(u'Tunnel0', connection.tunnel)
         self.assertEqual(constants.DOWN, connection.last_status)
         self.assertEqual(1, self.conn_create.call_count)
+
+    def test_update_service_create_no_csr(self):
+        """Failure test of sync of service that is not on CSR - ignore.
+
+        Ignore the VPN service and its IPSec connection(s) notifications for
+        which there is no corresponding Cisco CSR.
+        """
+        conn_data = {u'id': u'1', u'status': constants.PENDING_CREATE,
+                     u'admin_state_up': True,
+                     u'cisco': {u'site_conn_id': u'Tunnel0'}}
+        service_data = {u'id': u'123',
+                        u'status': constants.PENDING_CREATE,
+                        u'external_ip': u'2.2.2.2',
+                        u'admin_state_up': True,
+                        u'ipsec_conns': [conn_data]}
+        vpn_service = self.driver.update_service(self.context, service_data)
+        self.assertIsNone(vpn_service)
 
     def _check_connection_for_service(self, count, vpn_service):
         """Helper to check the connection information for a service."""
@@ -853,9 +769,9 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel2'}}
         service1_data = {u'id': u'123',
                          u'status': constants.PENDING_CREATE,
+                         u'external_ip': u'1.1.1.1',
                          u'admin_state_up': True,
                          u'ipsec_conns': [conn1_data, conn2_data]}
-        service1_data.update(self.router_info)
         conn3_data = {u'id': u'3', u'status': constants.PENDING_CREATE,
                       u'admin_state_up': True,
                       u'cisco': {u'site_conn_id': u'Tunnel3'}}
@@ -864,9 +780,9 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel4'}}
         service2_data = {u'id': u'456',
                          u'status': constants.PENDING_CREATE,
+                         u'external_ip': u'1.1.1.1',
                          u'admin_state_up': True,
                          u'ipsec_conns': [conn3_data, conn4_data]}
-        service2_data.update(self.router_info)
         return service1_data, service2_data
 
     def test_create_two_connections_on_two_services(self):
@@ -874,7 +790,7 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         # Build notification message
         (service1_data,
          service2_data) = self.notification_for_two_services_with_two_conns()
-        # Simulate plugin returning notification, when requested
+        # Simulate plugin returning notifcation, when requested
         self.driver.agent_rpc.get_vpn_services_on_host.return_value = [
             service1_data, service2_data]
         vpn_services = self.driver.update_all_services_and_connections(
@@ -935,14 +851,14 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.assertEqual(1, self.conn_delete.call_count)
 
     def test_sweep_multiple_services(self):
-        """One service and conn updated, one service and conn not."""
+        """One service and conn udpated, one service and conn not."""
         # Create two services, each with a connection
         vpn_service1 = self.driver.create_vpn_service(self.service123_data)
         vpn_service1.create_connection(self.conn1_data)
         service456_data = {u'id': u'456',
                            u'status': constants.ACTIVE,
-                           u'admin_state_up': False}
-        service456_data.update(self.router_info)
+                           u'admin_state_up': False,
+                           u'external_ip': u'1.1.1.1'}
         conn2_data = {u'id': u'2', u'status': constants.ACTIVE,
                       u'admin_state_up': True,
                       u'cisco': {u'site_conn_id': u'Tunnel0'}}
@@ -966,32 +882,20 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                                                          connection_state):
         """Create internal structures for single service with connection.
 
-        Creates a service and corresponding connection. Then, simluates
-        the mark/update/sweep operation by marking both the service and
-        connection as clean and updating their status. Override the REST
-        client created for the service, with a mock, so that all calls
-        can be mocked out.
+        The service and connection will be marked as clean, and since
+        none are being deleted, the service's connections_removed
+        attribute will remain false.
         """
+        # Simulate that we have done mark, update, and sweep.
         conn_data = {u'id': u'1', u'status': connection_state,
                      u'admin_state_up': True,
                      u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
-                        u'admin_state_up': True}
-        service_data.update(self.router_info)
-        # Create a service and connection
-        vpn_service = self.driver.create_vpn_service(service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
-        connection = vpn_service.create_connection(conn_data)
-        # Simulate that the update phase visited both of them
-        vpn_service.is_dirty = False
-        vpn_service.connections_removed = False
-        vpn_service.last_status = service_state
-        vpn_service.is_admin_up = True
-        connection.is_dirty = False
-        connection.last_status = connection_state
-        connection.is_admin_up = True
-        connection.forced_down = False
-        return vpn_service
+                        u'status': service_state,
+                        u'external_ip': u'1.1.1.1',
+                        u'admin_state_up': True,
+                        u'ipsec_conns': [conn_data]}
+        return self.driver.update_service(self.context, service_data)
 
     def test_report_fragment_connection_created(self):
         """Generate report section for a created connection."""
@@ -1111,11 +1015,10 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                      u'cisco': {u'site_conn_id': u'Tunnel0'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
         # Tunnel would have been deleted, so simulate no status
         self.csr.read_tunnel_statuses.return_value = []
 
@@ -1142,11 +1045,10 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel2'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn1_data, conn2_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
         # Simulate that CSR has reported the connections with diff status
         self.csr.read_tunnel_statuses.return_value = [
             (u'Tunnel1', u'UP-IDLE'), (u'Tunnel2', u'DOWN-NEGOTIATING')]
@@ -1327,7 +1229,7 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         Shows the case where all the connections are down, so that the
         service should report as DOWN, as well.
         """
-        # Simulate one service with two ACTIVE connections
+        # Simulated one service with two ACTIVE connections
         conn1_data = {u'id': u'1', u'status': constants.ACTIVE,
                       u'admin_state_up': True,
                       u'cisco': {u'site_conn_id': u'Tunnel1'}}
@@ -1336,11 +1238,10 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel2'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn1_data, conn2_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
         # Simulate that the CSR has reported that the connections are DOWN
         self.csr.read_tunnel_statuses.return_value = [
             (u'Tunnel1', u'DOWN-NEGOTIATING'), (u'Tunnel2', u'DOWN')]
@@ -1374,50 +1275,18 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         is deleted and the remaining connection is DOWN, the service will
         indicate as DOWN.
         """
-        # Simulate one service with one connection up, one down
+        # Simulated one service with one connection up, one down
         conn1_data = {u'id': u'1', u'status': constants.ACTIVE,
                       u'admin_state_up': True,
-                      u'mtu': 1500,
-                      u'psk': u'secret',
-                      u'peer_address': '192.168.1.2',
-                      u'peer_cidrs': ['10.1.0.0/24', '10.2.0.0/24'],
-                      u'ike_policy': {u'auth_algorithm': u'sha1',
-                                      u'encryption_algorithm': u'aes-128',
-                                      u'pfs': u'Group5',
-                                      u'ike_version': u'v1',
-                                      u'lifetime_units': u'seconds',
-                                      u'lifetime_value': 3600},
-                      u'ipsec_policy': {u'transform_protocol': u'ah',
-                                        u'encryption_algorithm': u'aes-128',
-                                        u'auth_algorithm': u'sha1',
-                                        u'pfs': u'group5',
-                                        u'lifetime_units': u'seconds',
-                                        u'lifetime_value': 3600},
                       u'cisco': {u'site_conn_id': u'Tunnel1'}}
         conn2_data = {u'id': u'2', u'status': constants.DOWN,
                       u'admin_state_up': True,
-                      u'mtu': 1500,
-                      u'psk': u'secret',
-                      u'peer_address': '192.168.1.2',
-                      u'peer_cidrs': ['10.1.0.0/24', '10.2.0.0/24'],
-                      u'ike_policy': {u'auth_algorithm': u'sha1',
-                                      u'encryption_algorithm': u'aes-128',
-                                      u'pfs': u'Group5',
-                                      u'ike_version': u'v1',
-                                      u'lifetime_units': u'seconds',
-                                      u'lifetime_value': 3600},
-                      u'ipsec_policy': {u'transform_protocol': u'ah',
-                                        u'encryption_algorithm': u'aes-128',
-                                        u'auth_algorithm': u'sha1',
-                                        u'pfs': u'group5',
-                                        u'lifetime_units': u'seconds',
-                                        u'lifetime_value': 3600},
                       u'cisco': {u'site_conn_id': u'Tunnel2'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn1_data, conn2_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
         self.assertEqual(constants.ACTIVE, vpn_service.last_status)
         self.assertEqual(constants.ACTIVE,
@@ -1429,11 +1298,10 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         self.driver.mark_existing_connections_as_dirty()
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': True,
                         u'ipsec_conns': [conn2_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
         self.driver.remove_unknown_connections(self.context)
         self.assertTrue(vpn_service.connections_removed)
         self.assertEqual(constants.ACTIVE, vpn_service.last_status)
@@ -1463,7 +1331,7 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         When the service is admin down, all the connections will report
         as DOWN.
         """
-        # Simulate one service (admin down) with two ACTIVE connections
+        # Simulated one service (admin down) with two ACTIVE connections
         conn1_data = {u'id': u'1', u'status': constants.ACTIVE,
                       u'admin_state_up': True,
                       u'cisco': {u'site_conn_id': u'Tunnel1'}}
@@ -1472,11 +1340,10 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                       u'cisco': {u'site_conn_id': u'Tunnel2'}}
         service_data = {u'id': u'123',
                         u'status': constants.ACTIVE,
+                        u'external_ip': u'1.1.1.1',
                         u'admin_state_up': False,
                         u'ipsec_conns': [conn1_data, conn2_data]}
-        service_data.update(self.router_info)
         vpn_service = self.driver.update_service(self.context, service_data)
-        vpn_service.csr = self.csr  # Mocked REST client
         # Since service admin down, connections will have been deleted
         self.csr.read_tunnel_statuses.return_value = []
 
@@ -1507,7 +1374,6 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
         vpn_service1 = self.driver.update_service(self.context, service1_data)
         vpn_service2 = self.driver.update_service(self.context, service2_data)
         # Simulate that the CSR has created the connections
-        vpn_service1.csr = vpn_service2.csr = self.csr  # Mocked REST client
         self.csr.read_tunnel_statuses.return_value = [
             (u'Tunnel1', u'UP-ACTIVE'), (u'Tunnel2', u'DOWN'),
             (u'Tunnel3', u'DOWN-NEGOTIATING'), (u'Tunnel4', u'UP-IDLE')]
@@ -1519,8 +1385,8 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                             u'ipsec_site_connections': {
                                 u'1': {u'status': constants.ACTIVE,
                                        u'updated_pending_status': True},
-                                u'2': {u'status': constants.DOWN,
-                                       u'updated_pending_status': True}}
+                            u'2': {u'status': constants.DOWN,
+                                   u'updated_pending_status': True}}
                             },
                            {u'id': u'456',
                             u'updated_pending_status': True,
@@ -1531,8 +1397,7 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
                                 u'4': {u'status': constants.ACTIVE,
                                        u'updated_pending_status': True}}
                             }]
-        self.assertEqual(expected_report,
-                         sorted(report, key=operator.itemgetter('id')))
+        self.assertEqual(expected_report, report)
         # Check that service and connection statuses are updated
         self.assertEqual(constants.ACTIVE, vpn_service1.last_status)
         self.assertEqual(constants.ACTIVE,
@@ -1552,3 +1417,176 @@ class TestCiscoCsrIPsecDeviceDriverSyncStatuses(base.BaseTestCase):
             context = mock.Mock()
             self.driver.vpnservice_updated(context)
             sync.assert_called_once_with(context, [])
+
+
+class TestCiscoCsrIPsecDeviceDriverConfigLoading(base.BaseTestCase):
+
+    def create_tempfile(self, contents):
+        (fd, path) = tempfile.mkstemp(prefix='test', suffix='.conf')
+        try:
+            os.write(fd, contents.encode('utf-8'))
+        finally:
+            os.close(fd)
+        return path
+
+    def test_loading_csr_configuration(self):
+        """Ensure that Cisco CSR configs can be loaded from config files."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n')
+        expected = {'3.2.1.1': {'rest_mgmt': '10.20.30.1',
+                                'tunnel_ip': '3.2.1.3',
+                                'username': 'me',
+                                'password': 'secret',
+                                'timeout': 5.0}}
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual(expected, csrs_found)
+
+    def test_loading_config_without_timeout(self):
+        """Cisco CSR config without timeout will use default timeout."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n')
+        expected = {'3.2.1.1': {'rest_mgmt': '10.20.30.1',
+                                'tunnel_ip': '3.2.1.3',
+                                'username': 'me',
+                                'password': 'secret',
+                                'timeout': csr_client.TIMEOUT}}
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual(expected, csrs_found)
+
+    def test_skip_loading_duplicate_csr_configuration(self):
+        """Failure test that duplicate configurations are ignored."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n'
+                                        '[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 5.5.5.3\n'
+                                        'tunnel_ip = 3.2.1.6\n'
+                                        'username = me\n'
+                                        'password = secret\n')
+        expected = {'3.2.1.1': {'rest_mgmt': '10.20.30.1',
+                                'tunnel_ip': '3.2.1.3',
+                                'username': 'me',
+                                'password': 'secret',
+                                'timeout': 5.0}}
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual(expected, csrs_found)
+
+    def test_fail_loading_config_with_invalid_timeout(self):
+        """Failure test of invalid timeout in config info."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = yes\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_fail_loading_config_missing_required_info(self):
+        """Failure test of config missing required info."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:1.1.1.0]\n'
+                                        'tunnel_ip = 1.1.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n'
+                                        '[CISCO_CSR_REST:2.2.2.0]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n'
+                                        '[CISCO_CSR_REST:3.3.3.0]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 3.3.3.3\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n'
+                                        '[CISCO_CSR_REST:4.4.4.0]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 4.4.4.4\n'
+                                        'username = me\n'
+                                        'timeout = 5.0\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_fail_loading_config_with_invalid_router_id(self):
+        """Failure test of config with invalid rotuer ID."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:4.3.2.1.9]\n'
+                                        'rest_mgmt = 10.20.30.1\n'
+                                        'tunnel_ip = 4.3.2.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_fail_loading_config_with_invalid_mgmt_ip(self):
+        """Failure test of configuration with invalid management IP address."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 1.1.1.1.1\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_fail_loading_config_with_invalid_tunnel_ip(self):
+        """Failure test of configuration with invalid tunnel IP address."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 1.1.1.1\n'
+                                        'tunnel_ip = 3.2.1.4.5\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_failure_no_configurations_entries(self):
+        """Failure test config file without any CSR definitions."""
+        cfg_file = self.create_tempfile('NO CISCO SECTION AT ALL\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_failure_no_csr_configurations_entries(self):
+        """Failure test config file without any CSR definitions."""
+        cfg_file = self.create_tempfile('[SOME_CONFIG:123]\n'
+                                        'username = me\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_missing_config_value(self):
+        """Failure test of config file missing a value for attribute."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = \n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 5.0\n')
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual({}, csrs_found)
+
+    def test_ignores_invalid_attribute_in_config(self):
+        """Test ignoring of config file with invalid attribute."""
+        cfg_file = self.create_tempfile('[CISCO_CSR_REST:3.2.1.1]\n'
+                                        'rest_mgmt = 1.1.1.1\n'
+                                        'bogus = abcdef\n'
+                                        'tunnel_ip = 3.2.1.3\n'
+                                        'username = me\n'
+                                        'password = secret\n'
+                                        'timeout = 15.5\n')
+        expected = {'3.2.1.1': {'rest_mgmt': '1.1.1.1',
+                                'tunnel_ip': '3.2.1.3',
+                                'username': 'me',
+                                'password': 'secret',
+                                'timeout': 15.5}}
+        csrs_found = ipsec_driver.find_available_csrs_from_config([cfg_file])
+        self.assertEqual(expected, csrs_found)

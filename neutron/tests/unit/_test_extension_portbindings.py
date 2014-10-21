@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 NEC Corporation
 # All rights reserved.
 #
@@ -12,6 +14,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Akihiro Motoki, NEC Corporation
+#
 
 import contextlib
 import httplib
@@ -21,7 +26,7 @@ from webob import exc
 
 from neutron import context
 from neutron.extensions import portbindings
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.tests.unit import test_db_plugin
 
 
@@ -70,7 +75,7 @@ class PortBindingsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
             self._check_response_no_portbindings(non_admin_port)
 
     def test_ports_vif_details(self):
-        plugin = manager.NeutronManager.get_plugin()
+        plugin = NeutronManager.get_plugin()
         cfg.CONF.set_default('allow_overlapping_ips', True)
         with contextlib.nested(self.port(), self.port()):
             ctx = context.get_admin_context()
@@ -108,6 +113,7 @@ class PortBindingsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
     def _test_update_port_binding_profile(self, profile):
         profile_arg = {portbindings.PROFILE: profile}
         with self.port() as port:
+            # print "(1) %s" % port
             self._check_port_binding_profile(port['port'])
             port_id = port['port']['id']
             ctx = context.get_admin_context()
@@ -148,11 +154,14 @@ class PortBindingsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
             with self.subnet(network=net1) as subnet1:
                 with self.port(subnet=subnet1) as port:
                     # By default user is admin - now test non admin user
+                    # Note that 404 is returned when prohibit by policy.
+                    # See comment for PolicyNotAuthorized except clause
+                    # in update() in neutron.api.v2.base.Controller.
                     port_id = port['port']['id']
                     ctx = self._get_non_admin_context()
                     port = self._update('ports', port_id,
                                         {'port': profile_arg},
-                                        expected_code=exc.HTTPForbidden.code,
+                                        expected_code=404,
                                         neutron_context=ctx)
 
 

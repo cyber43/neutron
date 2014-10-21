@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,13 +13,17 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import contextlib
 
 import mock
 
 from neutron.common import exceptions
-from neutron.services.loadbalancer.drivers.haproxy import namespace_driver
+from neutron.services.loadbalancer.drivers.haproxy import (
+    namespace_driver
+)
 from neutron.tests import base
 
 
@@ -29,9 +35,7 @@ class TestHaproxyNSDriver(base.BaseTestCase):
         conf.haproxy.loadbalancer_state_path = '/the/path'
         conf.interface_driver = 'intdriver'
         conf.haproxy.user_group = 'test_group'
-        conf.haproxy.send_gratuitous_arp = 3
         conf.AGENT.root_helper = 'sudo_test'
-        self.conf = conf
         self.mock_importer = mock.patch.object(namespace_driver,
                                                'importutils').start()
 
@@ -119,41 +123,6 @@ class TestHaproxyNSDriver(base.BaseTestCase):
                 mock.call().garbage_collect_namespace()
             ])
 
-    def test_undeploy_instance_with_ns_cleanup(self):
-        with contextlib.nested(
-            mock.patch.object(self.driver, '_get_state_file_path'),
-            mock.patch.object(self.driver, 'vif_driver'),
-            mock.patch.object(namespace_driver, 'kill_pids_in_file'),
-            mock.patch('neutron.agent.linux.ip_lib.IPWrapper'),
-            mock.patch('os.path.isdir'),
-            mock.patch('shutil.rmtree')
-        ) as (gsp, vif, kill, ip_wrap, isdir, rmtree):
-            device = mock.Mock()
-            device_name = 'port_device'
-            device.name = device_name
-            ip_wrap.return_value.get_devices.return_value = [device]
-
-            self.driver.undeploy_instance('pool_id', cleanup_namespace=True)
-            vif.unplug.assert_called_once_with(device_name,
-                                               namespace='qlbaas-pool_id')
-
-    def test_remove_orphans(self):
-        with contextlib.nested(
-            mock.patch.object(self.driver, 'exists'),
-            mock.patch.object(self.driver, 'undeploy_instance'),
-            mock.patch('os.listdir'),
-            mock.patch('os.path.exists')
-        ) as (exists, undeploy, listdir, path_exists):
-            known = ['known1', 'known2']
-            unknown = ['unknown1', 'unknown2']
-            listdir.return_value = known + unknown
-            exists.side_effect = lambda x: x == 'unknown2'
-
-            self.driver.remove_orphans(known)
-
-            undeploy.assert_called_once_with('unknown2',
-                                             cleanup_namespace=True)
-
     def test_exists(self):
         with contextlib.nested(
             mock.patch.object(self.driver, '_get_state_file_path'),
@@ -161,7 +130,7 @@ class TestHaproxyNSDriver(base.BaseTestCase):
             mock.patch('socket.socket'),
             mock.patch('os.path.exists'),
         ) as (gsp, ip_wrap, socket, path_exists):
-            gsp.side_effect = lambda x, y, z: '/pool/' + y
+            gsp.side_effect = lambda x, y: '/pool/' + y
 
             ip_wrap.return_value.netns.exists.return_value = True
             path_exists.return_value = True
@@ -208,21 +177,20 @@ class TestHaproxyNSDriver(base.BaseTestCase):
                 mock.patch('socket.socket'),
                 mock.patch('os.path.exists'),
         ) as (gsp, socket, path_exists):
-            gsp.side_effect = lambda x, y, z: '/pool/' + y
+            gsp.side_effect = lambda x, y: '/pool/' + y
             path_exists.return_value = True
             socket.return_value = socket
             socket.recv.return_value = raw_stats
 
             exp_stats = {'connection_errors': '0',
-                         'active_connections': '3',
+                         'active_connections': '1',
                          'current_sessions': '3',
                          'bytes_in': '7764',
-                         'max_connections': '4',
+                         'max_connections': '2',
                          'max_sessions': '4',
                          'bytes_out': '2365',
                          'response_errors': '0',
                          'total_sessions': '10',
-                         'total_connections': '10',
                          'members': {
                              '32a6c2a3-420a-44c3-955d-86bd2fc6871e': {
                                  'status': 'ACTIVE',
@@ -272,49 +240,19 @@ class TestHaproxyNSDriver(base.BaseTestCase):
                                                          'test_interface',
                                                          'mac_addr',
                                                          namespace='test_ns')
-            self.vif_driver.init_l3.assert_called_once_with(
-                'test_interface',
-                ['10.0.0.2/24'],
-                namespace='test_ns'
-            )
+            self.vif_driver.init_l3.assert_called_once_with('test_interface',
+                                                            ['10.0.0.2/24'],
+                                                            namespace=
+                                                            'test_ns')
             cmd = ['route', 'add', 'default', 'gw', '10.0.0.1']
-            cmd_arping = ['arping', '-U', '-I',
-                          'test_interface', '-c',
-                          self.conf.haproxy.send_gratuitous_arp, '10.0.0.2']
             ip_wrap.assert_has_calls([
                 mock.call('sudo_test', namespace='test_ns'),
                 mock.call().netns.execute(cmd, check_exit_code=False),
-                mock.call().netns.execute(cmd_arping, check_exit_code=False),
             ])
 
             dev_exists.return_value = True
             self.assertRaises(exceptions.PreexistingDeviceFailure,
                               self.driver._plug, 'test_ns', test_port, False)
-
-    def test_plug_not_send_gratuitous_arp(self):
-        self.conf.haproxy.send_gratuitous_arp = 0
-        test_port = {'id': 'port_id',
-                     'network_id': 'net_id',
-                     'mac_address': 'mac_addr',
-                     'fixed_ips': [{'ip_address': '10.0.0.2',
-                                    'subnet': {'cidr': '10.0.0.0/24',
-                                               'gateway_ip': '10.0.0.1'}}]}
-        with contextlib.nested(
-                mock.patch('neutron.agent.linux.ip_lib.device_exists'),
-                mock.patch('netaddr.IPNetwork'),
-                mock.patch('neutron.agent.linux.ip_lib.IPWrapper'),
-        ) as (dev_exists, ip_net, ip_wrap):
-            self.vif_driver.get_device_name.return_value = 'test_interface'
-            dev_exists.return_value = False
-            ip_net.return_value = ip_net
-            ip_net.prefixlen = 24
-
-            self.driver._plug('test_ns', test_port)
-            cmd = ['route', 'add', 'default', 'gw', '10.0.0.1']
-            expected = [
-                mock.call('sudo_test', namespace='test_ns'),
-                mock.call().netns.execute(cmd, check_exit_code=False)]
-            self.assertEqual(expected, ip_wrap.mock_calls)
 
     def test_plug_no_gw(self):
         test_port = {'id': 'port_id',
@@ -340,53 +278,14 @@ class TestHaproxyNSDriver(base.BaseTestCase):
                                                          'test_interface',
                                                          'mac_addr',
                                                          namespace='test_ns')
-            self.vif_driver.init_l3.assert_called_once_with(
-                'test_interface',
-                ['10.0.0.2/24'],
-                namespace='test_ns'
-            )
+            self.vif_driver.init_l3.assert_called_once_with('test_interface',
+                                                            ['10.0.0.2/24'],
+                                                            namespace=
+                                                            'test_ns')
             self.assertFalse(ip_wrap.called)
             dev_exists.return_value = True
             self.assertRaises(exceptions.PreexistingDeviceFailure,
                               self.driver._plug, 'test_ns', test_port, False)
-
-    def test_plug_gw_in_host_routes(self):
-        test_port = {'id': 'port_id',
-                     'network_id': 'net_id',
-                     'mac_address': 'mac_addr',
-                     'fixed_ips': [{'ip_address': '10.0.0.2',
-                                    'subnet': {'cidr': '10.0.0.0/24',
-                                               'host_routes':
-                                               [{'destination': '0.0.0.0/0',
-                                                 'nexthop': '10.0.0.1'}]}}]}
-        with contextlib.nested(
-                mock.patch('neutron.agent.linux.ip_lib.device_exists'),
-                mock.patch('netaddr.IPNetwork'),
-                mock.patch('neutron.agent.linux.ip_lib.IPWrapper'),
-        ) as (dev_exists, ip_net, ip_wrap):
-            self.vif_driver.get_device_name.return_value = 'test_interface'
-            dev_exists.return_value = False
-            ip_net.return_value = ip_net
-            ip_net.prefixlen = 24
-
-            self.driver._plug('test_ns', test_port)
-            self.rpc_mock.plug_vip_port.assert_called_once_with(
-                test_port['id'])
-            self.assertTrue(dev_exists.called)
-            self.vif_driver.plug.assert_called_once_with('net_id', 'port_id',
-                                                         'test_interface',
-                                                         'mac_addr',
-                                                         namespace='test_ns')
-            self.vif_driver.init_l3.assert_called_once_with(
-                'test_interface',
-                ['10.0.0.2/24'],
-                namespace='test_ns'
-            )
-            cmd = ['route', 'add', 'default', 'gw', '10.0.0.1']
-            ip_wrap.assert_has_calls([
-                mock.call('sudo_test', namespace='test_ns'),
-                mock.call().netns.execute(cmd, check_exit_code=False),
-            ])
 
     def test_unplug(self):
         self.vif_driver.get_device_name.return_value = 'test_interface'

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc
 # All Rights Reserved.
 #
@@ -26,13 +28,12 @@ from neutron.api.v2 import attributes
 from neutron.common import config
 from neutron import manager
 from neutron.plugins.common import constants
-from neutron.plugins.ml2 import plugin as ml2_plugin
+from neutron.plugins.openvswitch import ovs_neutron_plugin
 from neutron import quota
 from neutron.tests import base
 from neutron.tests.unit.extensions import extendedattribute as extattr
 from neutron.tests.unit import test_api_v2
 from neutron.tests.unit import testlib_api
-from neutron.tests.unit import testlib_plugin
 from neutron import wsgi
 
 _uuid = test_api_v2._uuid
@@ -41,7 +42,7 @@ extensions_path = ':'.join(neutron.tests.unit.extensions.__path__)
 
 
 class ExtensionExtendedAttributeTestPlugin(
-    ml2_plugin.Ml2Plugin):
+    ovs_neutron_plugin.OVSNeutronPluginV2):
 
     supported_extension_aliases = [
         'ext-obj-test', "extended-ext-attr"
@@ -67,8 +68,7 @@ class ExtensionExtendedAttributeTestPlugin(
         return self.objh[id]
 
 
-class ExtensionExtendedAttributeTestCase(base.BaseTestCase,
-                                         testlib_plugin.PluginSetupHelper):
+class ExtensionExtendedAttributeTestCase(base.BaseTestCase):
     def setUp(self):
         super(ExtensionExtendedAttributeTestCase, self).setUp()
         plugin = (
@@ -77,7 +77,8 @@ class ExtensionExtendedAttributeTestCase(base.BaseTestCase,
         )
 
         # point config file to: neutron/tests/etc/neutron.conf.test
-        self.config_parse()
+        args = ['--config-file', test_api_v2.etcdir('neutron.conf.test')]
+        config.parse(args=args)
 
         self.setup_coreplugin(plugin)
 

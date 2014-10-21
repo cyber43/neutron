@@ -1,3 +1,4 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 # Copyright 2013 Big Switch Networks, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,4 +30,3 @@ class BigSwitchDhcpAgentNotifierTestCase(
         self.setup_config_files()
         self.setup_patches()
         super(BigSwitchDhcpAgentNotifierTestCase, self).setUp()
-        self.startHttpPatch()

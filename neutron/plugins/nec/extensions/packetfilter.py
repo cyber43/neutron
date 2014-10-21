@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012-2013 NEC Corporation.
 # All rights reserved.
 #
@@ -12,6 +14,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Ryota MIBU
+#
 
 from oslo.config import cfg
 
@@ -20,7 +25,7 @@ from neutron.api.v2 import attributes
 from neutron.api.v2 import base
 from neutron.common import constants
 from neutron.common import exceptions
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron import quota
 
 
@@ -190,7 +195,7 @@ class Packetfilter(extensions.ExtensionDescriptor):
         quota.QUOTAS.register_resource(qresource)
 
         resource = base.create_resource(COLLECTION, RESOURCE,
-                                        manager.NeutronManager.get_plugin(),
+                                        NeutronManager.get_plugin(),
                                         PACKET_FILTER_ATTR_PARAMS)
         pf_ext = extensions.ResourceExtension(
             COLLECTION, resource, attr_map=PACKET_FILTER_ATTR_PARAMS)

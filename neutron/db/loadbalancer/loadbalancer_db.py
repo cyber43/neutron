@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 OpenStack Foundation.  All rights reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -13,7 +15,6 @@
 #    under the License.
 #
 
-from oslo.db import exception
 import sqlalchemy as sa
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
@@ -21,12 +22,14 @@ from sqlalchemy.orm import validates
 
 from neutron.api.v2 import attributes
 from neutron.common import exceptions as n_exc
-from neutron.db import common_db_mixin as base_db
+from neutron.db import db_base_plugin_v2 as base_db
 from neutron.db import model_base
 from neutron.db import models_v2
 from neutron.db import servicetype_db as st_db
 from neutron.extensions import loadbalancer
+from neutron.extensions.loadbalancer import LoadBalancerPluginBase
 from neutron import manager
+from neutron.openstack.common.db import exception
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import uuidutils
@@ -174,7 +177,7 @@ class PoolMonitorAssociation(model_base.BASEV2,
                            primary_key=True)
 
 
-class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
+class LoadBalancerPluginDb(LoadBalancerPluginBase,
                            base_db.CommonDbMixin):
     """Wraps loadbalancer with SQLAlchemy models.
 
@@ -232,10 +235,7 @@ class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
     ########################################################
     # VIP DB access
     def _make_vip_dict(self, vip, fields=None):
-        fixed_ip = {}
-        # it's possible that vip doesn't have created port yet
-        if vip.port:
-            fixed_ip = (vip.port.fixed_ips or [{}])[0]
+        fixed_ip = (vip.port.fixed_ips or [{}])[0]
 
         res = {'id': vip['id'],
                'tenant_id': vip['tenant_id'],
@@ -321,27 +321,25 @@ class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
             sess_qry.filter_by(vip_id=vip_id).delete()
 
     def _create_port_for_vip(self, context, vip_db, subnet_id, ip_address):
-        # resolve subnet and create port
-        subnet = self._core_plugin.get_subnet(context, subnet_id)
-        fixed_ip = {'subnet_id': subnet['id']}
-        if ip_address and ip_address != attributes.ATTR_NOT_SPECIFIED:
-            fixed_ip['ip_address'] = ip_address
+            # resolve subnet and create port
+            subnet = self._core_plugin.get_subnet(context, subnet_id)
+            fixed_ip = {'subnet_id': subnet['id']}
+            if ip_address and ip_address != attributes.ATTR_NOT_SPECIFIED:
+                fixed_ip['ip_address'] = ip_address
 
-        port_data = {
-            'tenant_id': vip_db.tenant_id,
-            'name': 'vip-' + vip_db.id,
-            'network_id': subnet['network_id'],
-            'mac_address': attributes.ATTR_NOT_SPECIFIED,
-            'admin_state_up': False,
-            'device_id': '',
-            'device_owner': '',
-            'fixed_ips': [fixed_ip]
-        }
+            port_data = {
+                'tenant_id': vip_db.tenant_id,
+                'name': 'vip-' + vip_db.id,
+                'network_id': subnet['network_id'],
+                'mac_address': attributes.ATTR_NOT_SPECIFIED,
+                'admin_state_up': False,
+                'device_id': '',
+                'device_owner': '',
+                'fixed_ips': [fixed_ip]
+            }
 
-        port = self._core_plugin.create_port(context, {'port': port_data})
-        vip_db.port_id = port['id']
-        # explicitly sync session with db
-        context.session.flush()
+            port = self._core_plugin.create_port(context, {'port': port_data})
+            vip_db.port_id = port['id']
 
     def create_vip(self, context, vip):
         v = vip['vip']
@@ -361,6 +359,9 @@ class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
                 if pool['status'] == constants.PENDING_DELETE:
                     raise loadbalancer.StateInvalid(state=pool['status'],
                                                     id=pool['id'])
+            else:
+                pool = None
+
             vip_db = Vip(id=uuidutils.generate_uuid(),
                          tenant_id=tenant_id,
                          name=v['name'],
@@ -387,26 +388,16 @@ class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
             except exception.DBDuplicateEntry:
                 raise loadbalancer.VipExists(pool_id=v['pool_id'])
 
-        try:
             # create a port to reserve address for IPAM
-            # do it outside the transaction to avoid rpc calls
             self._create_port_for_vip(
-                context, vip_db, v['subnet_id'], v.get('address'))
-        except Exception:
-            # catch any kind of exceptions
-            with excutils.save_and_reraise_exception():
-                context.session.delete(vip_db)
-                context.session.flush()
+                context,
+                vip_db,
+                v['subnet_id'],
+                v.get('address')
+            )
 
-        if v['pool_id']:
-            # fetching pool again
-            pool = self._get_resource(context, Pool, v['pool_id'])
-            # (NOTE): we rely on the fact that pool didn't change between
-            # above block and here
-            vip_db['pool_id'] = v['pool_id']
-            pool['vip_id'] = vip_db['id']
-            # explicitly flush changes as we're outside any transaction
-            context.session.flush()
+            if pool:
+                pool['vip_id'] = vip_db['id']
 
         return self._make_vip_dict(vip_db)
 
@@ -472,8 +463,8 @@ class LoadBalancerPluginDb(loadbalancer.LoadBalancerPluginBase,
                 pool.update({"vip_id": None})
 
             context.session.delete(vip)
-        if vip.port:  # this is a Neutron port
-            self._core_plugin.delete_port(context, vip.port.id)
+            if vip.port:  # this is a Neutron port
+                self._core_plugin.delete_port(context, vip.port.id)
 
     def get_vip(self, context, id, fields=None):
         vip = self._get_resource(context, Vip, id)

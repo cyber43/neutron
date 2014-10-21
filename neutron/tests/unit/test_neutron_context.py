@@ -28,6 +28,7 @@ class TestNeutronContext(base.BaseTestCase):
         db_api = 'neutron.db.api.get_session'
         self._db_api_session_patcher = mock.patch(db_api)
         self.db_api_session = self._db_api_session_patcher.start()
+        self.addCleanup(self._db_api_session_patcher.stop)
 
     def test_neutron_context_create(self):
         ctx = context.Context('user_id', 'tenant_id')
@@ -39,7 +40,6 @@ class TestNeutronContext(base.BaseTestCase):
         self.assertEqual('tenant_id', ctx.tenant)
         self.assertIsNone(ctx.user_name)
         self.assertIsNone(ctx.tenant_name)
-        self.assertIsNone(ctx.auth_token)
 
     def test_neutron_context_create_logs_unknown_kwarg(self):
         with mock.patch.object(context.LOG, 'debug') as mock_log:
@@ -60,11 +60,6 @@ class TestNeutronContext(base.BaseTestCase):
         ctx = context.Context('user_id', 'tenant_id', request_id='req_id_xxx')
         self.assertEqual('req_id_xxx', ctx.request_id)
 
-    def test_neutron_context_create_with_auth_token(self):
-        ctx = context.Context('user_id', 'tenant_id',
-                              auth_token='auth_token_xxx')
-        self.assertEqual('auth_token_xxx', ctx.auth_token)
-
     def test_neutron_context_to_dict(self):
         ctx = context.Context('user_id', 'tenant_id')
         ctx_dict = ctx.to_dict()
@@ -76,7 +71,6 @@ class TestNeutronContext(base.BaseTestCase):
         self.assertIsNone(ctx_dict['user_name'])
         self.assertIsNone(ctx_dict['tenant_name'])
         self.assertIsNone(ctx_dict['project_name'])
-        self.assertIsNone(ctx_dict['auth_token'])
 
     def test_neutron_context_to_dict_with_name(self):
         ctx = context.Context('user_id', 'tenant_id',
@@ -86,19 +80,12 @@ class TestNeutronContext(base.BaseTestCase):
         self.assertEqual('tenant_name', ctx_dict['tenant_name'])
         self.assertEqual('tenant_name', ctx_dict['project_name'])
 
-    def test_neutron_context_to_dict_with_auth_token(self):
-        ctx = context.Context('user_id', 'tenant_id',
-                              auth_token='auth_token_xxx')
-        ctx_dict = ctx.to_dict()
-        self.assertEqual('auth_token_xxx', ctx_dict['auth_token'])
-
     def test_neutron_context_admin_to_dict(self):
         self.db_api_session.return_value = 'fakesession'
         ctx = context.get_admin_context()
         ctx_dict = ctx.to_dict()
         self.assertIsNone(ctx_dict['user_id'])
         self.assertIsNone(ctx_dict['tenant_id'])
-        self.assertIsNone(ctx_dict['auth_token'])
         self.assertIsNotNone(ctx.session)
         self.assertNotIn('session', ctx_dict)
 
@@ -107,7 +94,6 @@ class TestNeutronContext(base.BaseTestCase):
         ctx_dict = ctx.to_dict()
         self.assertIsNone(ctx_dict['user_id'])
         self.assertIsNone(ctx_dict['tenant_id'])
-        self.assertIsNone(ctx_dict['auth_token'])
         self.assertFalse(hasattr(ctx, 'session'))
 
     def test_neutron_context_with_load_roles_true(self):

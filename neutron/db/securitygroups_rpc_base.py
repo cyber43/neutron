@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2012, Nachi Ueno, NTT MCL, Inc.
 # All Rights Reserved.
 #
@@ -14,10 +16,8 @@
 #    under the License.
 
 import netaddr
-from sqlalchemy.orm import exc
 
 from neutron.common import constants as q_const
-from neutron.common import ipv6_utils as ipv6
 from neutron.common import utils
 from neutron.db import models_v2
 from neutron.db import securitygroups_db as sg_db
@@ -27,34 +27,15 @@ from neutron.openstack.common import log as logging
 LOG = logging.getLogger(__name__)
 
 
+IP_MASK = {q_const.IPv4: 32,
+           q_const.IPv6: 128}
+
+
 DIRECTION_IP_PREFIX = {'ingress': 'source_ip_prefix',
                        'egress': 'dest_ip_prefix'}
 
-DHCP_RULE_PORT = {4: (67, 68, q_const.IPv4), 6: (547, 546, q_const.IPv6)}
-
 
 class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
-    """Mixin class to add agent-based security group implementation."""
-
-    def get_port_from_device(self, device):
-        """Get port dict from device name on an agent.
-
-        Subclass must provide this method.
-
-        :param device: device name which identifies a port on the agent side.
-        What is specified in "device" depends on a plugin agent implementation.
-        For example, it is a port ID in OVS agent and netdev name in Linux
-        Bridge agent.
-        :return: port dict returned by DB plugin get_port(). In addition,
-        it must contain the following fields in the port dict returned.
-        - device
-        - security_groups
-        - security_group_rules,
-        - security_group_source_groups
-        - fixed_ips
-        """
-        raise NotImplementedError(_("%s must implement get_port_from_device.")
-                                  % self.__class__.__name__)
 
     def create_security_group_rule(self, context, security_group_rule):
         bulk_rule = {'security_group_rules': [security_group_rule]}
@@ -137,78 +118,36 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         """
         if port['device_owner'] == q_const.DEVICE_OWNER_DHCP:
             self.notifier.security_groups_provider_updated(context)
-        # For IPv6, provider rule need to be updated in case router
-        # interface is created or updated after VM port is created.
-        elif port['device_owner'] == q_const.DEVICE_OWNER_ROUTER_INTF:
-            if any(netaddr.IPAddress(fixed_ip['ip_address']).version == 6
-                   for fixed_ip in port['fixed_ips']):
-                self.notifier.security_groups_provider_updated(context)
         else:
             self.notifier.security_groups_member_updated(
                 context, port.get(ext_sg.SECURITYGROUPS))
 
-    def security_group_info_for_ports(self, context, ports):
-        sg_info = {'devices': ports,
-                   'security_groups': {},
-                   'sg_member_ips': {}}
-        rules_in_db = self._select_rules_for_ports(context, ports)
-        remote_security_group_info = {}
-        for (port_id, rule_in_db) in rules_in_db:
-            remote_gid = rule_in_db.get('remote_group_id')
-            security_group_id = rule_in_db.get('security_group_id')
-            ethertype = rule_in_db['ethertype']
-            if ('security_group_source_groups'
-                not in sg_info['devices'][port_id]):
-                sg_info['devices'][port_id][
-                    'security_group_source_groups'] = []
 
-            if remote_gid:
-                if (remote_gid
-                    not in sg_info['devices'][port_id][
-                        'security_group_source_groups']):
-                    sg_info['devices'][port_id][
-                        'security_group_source_groups'].append(remote_gid)
-                if remote_gid not in remote_security_group_info:
-                    remote_security_group_info[remote_gid] = {}
-                if ethertype not in remote_security_group_info[remote_gid]:
-                    remote_security_group_info[remote_gid][ethertype] = []
+class SecurityGroupServerRpcCallbackMixin(object):
+    """A mix-in that enable SecurityGroup agent support in plugin
+    implementations.
+    """
 
-            direction = rule_in_db['direction']
-            rule_dict = {
-                'direction': direction,
-                'ethertype': ethertype}
+    def security_group_rules_for_devices(self, context, **kwargs):
+        """Return security group rules for each port.
 
-            for key in ('protocol', 'port_range_min', 'port_range_max',
-                        'remote_ip_prefix', 'remote_group_id'):
-                if rule_in_db.get(key):
-                    if key == 'remote_ip_prefix':
-                        direction_ip_prefix = DIRECTION_IP_PREFIX[direction]
-                        rule_dict[direction_ip_prefix] = rule_in_db[key]
-                        continue
-                    rule_dict[key] = rule_in_db[key]
-            if security_group_id not in sg_info['security_groups']:
-                sg_info['security_groups'][security_group_id] = []
-            if rule_dict not in sg_info['security_groups'][security_group_id]:
-                sg_info['security_groups'][security_group_id].append(
-                    rule_dict)
+        also convert remote_group_id rule
+        to source_ip_prefix and dest_ip_prefix rule
 
-        sg_info['sg_member_ips'] = remote_security_group_info
-        # the provider rules do not belong to any security group, so these
-        # rules still reside in sg_info['devices'] [port_id]
-        self._apply_provider_rule(context, sg_info['devices'])
+        :params devices: list of devices
+        :returns: port correspond to the devices with security group rules
+        """
+        devices = kwargs.get('devices')
 
-        return self._get_security_group_member_ips(context, sg_info)
-
-    def _get_security_group_member_ips(self, context, sg_info):
-        ips = self._select_ips_for_remote_group(
-            context, sg_info['sg_member_ips'].keys())
-        for sg_id, member_ips in ips.items():
-            for ip in member_ips:
-                ethertype = 'IPv%d' % netaddr.IPAddress(ip).version
-                if (ethertype in sg_info['sg_member_ips'][sg_id]
-                    and ip not in sg_info['sg_member_ips'][sg_id][ethertype]):
-                    sg_info['sg_member_ips'][sg_id][ethertype].append(ip)
-        return sg_info
+        ports = {}
+        for device in devices:
+            port = self.get_port_from_device(device)
+            if not port:
+                continue
+            if port['device_owner'].startswith('network:'):
+                continue
+            ports[port['id']] = port
+        return self._security_group_rules_for_ports(context, ports)
 
     def _select_rules_for_ports(self, context, ports):
         if not ports:
@@ -218,7 +157,7 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
 
         sgr_sgid = sg_db.SecurityGroupRule.security_group_id
 
-        query = context.session.query(sg_binding_port,
+        query = context.session.query(sg_db.SecurityGroupPortBinding,
                                       sg_db.SecurityGroupRule)
         query = query.join(sg_db.SecurityGroupRule,
                            sgr_sgid == sg_binding_sgid)
@@ -268,8 +207,7 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
     def _select_dhcp_ips_for_network_ids(self, context, network_ids):
         if not network_ids:
             return {}
-        query = context.session.query(models_v2.Port.mac_address,
-                                      models_v2.Port.network_id,
+        query = context.session.query(models_v2.Port,
                                       models_v2.IPAllocation.ip_address)
         query = query.join(models_v2.IPAllocation)
         query = query.filter(models_v2.Port.network_id.in_(network_ids))
@@ -280,73 +218,9 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         for network_id in network_ids:
             ips[network_id] = []
 
-        for mac_address, network_id, ip in query:
-            if (netaddr.IPAddress(ip).version == 6
-                and not netaddr.IPAddress(ip).is_link_local()):
-                ip = str(ipv6.get_ipv6_addr_by_EUI64(q_const.IPV6_LLA_PREFIX,
-                    mac_address))
-            if ip not in ips[network_id]:
-                ips[network_id].append(ip)
-
+        for port, ip in query:
+            ips[port['network_id']].append(ip)
         return ips
-
-    def _select_ra_ips_for_network_ids(self, context, network_ids):
-        """Select IP addresses to allow sending router advertisement from.
-
-        If OpenStack dnsmasq sends RA, get link local address of
-        gateway and allow RA from this Link Local address.
-        The gateway port link local address will only be obtained
-        when router is created before VM instance is booted and
-        subnet is attached to router.
-
-        If OpenStack doesn't send RA, allow RA from gateway IP.
-        Currently, the gateway IP needs to be link local to be able
-        to send RA to VM.
-        """
-        if not network_ids:
-            return {}
-        ips = {}
-        for network_id in network_ids:
-            ips[network_id] = set([])
-        query = context.session.query(models_v2.Subnet)
-        subnets = query.filter(models_v2.Subnet.network_id.in_(network_ids))
-        for subnet in subnets:
-            gateway_ip = subnet['gateway_ip']
-            if subnet['ip_version'] != 6 or not gateway_ip:
-                continue
-            if not netaddr.IPAddress(gateway_ip).is_link_local():
-                if subnet['ipv6_ra_mode']:
-                    gateway_ip = self._get_lla_gateway_ip_for_subnet(context,
-                                                                     subnet)
-                else:
-                    # TODO(xuhanp):Figure out how to allow gateway IP from
-                    # existing device to be global address and figure out the
-                    # link local address by other method.
-                    continue
-            if gateway_ip:
-                ips[subnet['network_id']].add(gateway_ip)
-
-        return ips
-
-    def _get_lla_gateway_ip_for_subnet(self, context, subnet):
-        query = context.session.query(models_v2.Port.mac_address)
-        query = query.join(models_v2.IPAllocation)
-        query = query.filter(
-            models_v2.IPAllocation.subnet_id == subnet['id'])
-        query = query.filter(
-            models_v2.IPAllocation.ip_address == subnet['gateway_ip'])
-        query = query.filter(models_v2.Port.device_owner ==
-                             q_const.DEVICE_OWNER_ROUTER_INTF)
-        try:
-            mac_address = query.one()[0]
-        except (exc.NoResultFound, exc.MultipleResultsFound):
-            LOG.warn(_('No valid gateway port on subnet %s is '
-                       'found for IPv6 RA'), subnet['id'])
-            return
-        lla_ip = str(ipv6.get_ipv6_addr_by_EUI64(
-            q_const.IPV6_LLA_PREFIX,
-            mac_address))
-        return lla_ip
 
     def _convert_remote_group_id_to_ip_prefix(self, context, ports):
         remote_group_ids = self._select_remote_group_ids(ports)
@@ -380,16 +254,18 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
     def _add_ingress_dhcp_rule(self, port, ips):
         dhcp_ips = ips.get(port['network_id'])
         for dhcp_ip in dhcp_ips:
-            source_port, dest_port, ethertype = DHCP_RULE_PORT[
-                netaddr.IPAddress(dhcp_ip).version]
+            if not netaddr.IPAddress(dhcp_ip).version == 4:
+                return
+
             dhcp_rule = {'direction': 'ingress',
-                         'ethertype': ethertype,
+                         'ethertype': q_const.IPv4,
                          'protocol': 'udp',
-                         'port_range_min': dest_port,
-                         'port_range_max': dest_port,
-                         'source_port_range_min': source_port,
-                         'source_port_range_max': source_port,
-                         'source_ip_prefix': dhcp_ip}
+                         'port_range_min': 68,
+                         'port_range_max': 68,
+                         'source_port_range_min': 67,
+                         'source_port_range_max': 67}
+            dhcp_rule['source_ip_prefix'] = "%s/%s" % (dhcp_ip,
+                                                       IP_MASK[q_const.IPv4])
             port['security_group_rules'].append(dhcp_rule)
 
     def _add_ingress_ra_rule(self, port, ips):
@@ -400,22 +276,22 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
 
             ra_rule = {'direction': 'ingress',
                        'ethertype': q_const.IPv6,
-                       'protocol': q_const.PROTO_NAME_ICMP_V6,
-                       'source_ip_prefix': ra_ip,
-                       'source_port_range_min': q_const.ICMPV6_TYPE_RA}
+                       'protocol': 'icmp'}
+            ra_rule['source_ip_prefix'] = "%s/%s" % (ra_ip,
+                                                     IP_MASK[q_const.IPv6])
             port['security_group_rules'].append(ra_rule)
 
     def _apply_provider_rule(self, context, ports):
         network_ids = self._select_network_ids(ports)
-        ips_dhcp = self._select_dhcp_ips_for_network_ids(context, network_ids)
-        ips_ra = self._select_ra_ips_for_network_ids(context, network_ids)
+        ips = self._select_dhcp_ips_for_network_ids(context, network_ids)
         for port in ports.values():
-            self._add_ingress_ra_rule(port, ips_ra)
-            self._add_ingress_dhcp_rule(port, ips_dhcp)
+            self._add_ingress_ra_rule(port, ips)
+            self._add_ingress_dhcp_rule(port, ips)
 
-    def security_group_rules_for_ports(self, context, ports):
+    def _security_group_rules_for_ports(self, context, ports):
         rules_in_db = self._select_rules_for_ports(context, ports)
-        for (port_id, rule_in_db) in rules_in_db:
+        for (binding, rule_in_db) in rules_in_db:
+            port_id = binding['port_id']
             port = ports[port_id]
             direction = rule_in_db['direction']
             rule_dict = {

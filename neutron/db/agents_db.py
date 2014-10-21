@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2013 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -16,16 +18,14 @@
 from eventlet import greenthread
 
 from oslo.config import cfg
-from oslo.db import exception as db_exc
 import sqlalchemy as sa
 from sqlalchemy.orm import exc
-from sqlalchemy import sql
 
-from neutron.common import rpc as n_rpc
 from neutron.db import model_base
 from neutron.db import models_v2
 from neutron.extensions import agent as ext_agent
 from neutron import manager
+from neutron.openstack.common.db import exception as db_exc
 from neutron.openstack.common import excutils
 from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log as logging
@@ -55,7 +55,7 @@ class Agent(model_base.BASEV2, models_v2.HasId):
     # TOPIC.host is a target topic
     host = sa.Column(sa.String(255), nullable=False)
     admin_state_up = sa.Column(sa.Boolean, default=True,
-                               server_default=sql.true(), nullable=False)
+                               nullable=False)
     # the time when first report came from agents
     created_at = sa.Column(sa.DateTime, nullable=False)
     # the time when first report came after agents start
@@ -73,30 +73,13 @@ class Agent(model_base.BASEV2, models_v2.HasId):
 
 
 class AgentDbMixin(ext_agent.AgentPluginBase):
-    """Mixin class to add agent extension to db_base_plugin_v2."""
+    """Mixin class to add agent extension to db_plugin_base_v2."""
 
     def _get_agent(self, context, id):
         try:
             agent = self._get_by_id(context, Agent, id)
         except exc.NoResultFound:
             raise ext_agent.AgentNotFound(id=id)
-        return agent
-
-    def get_enabled_agent_on_host(self, context, agent_type, host):
-        """Return agent of agent_type for the specified host."""
-        query = context.session.query(Agent)
-        query = query.filter(Agent.agent_type == agent_type,
-                             Agent.host == host,
-                             Agent.admin_state_up == sql.true())
-        try:
-            agent = query.one()
-        except exc.NoResultFound:
-            LOG.debug('No enabled %(agent_type)s agent on host '
-                      '%(host)s' % {'agent_type': agent_type, 'host': host})
-            return
-        if self.is_agent_down(agent.heartbeat_timestamp):
-            LOG.warn(_('%(agent_type)s agent %(agent_id)s is not active')
-                     % {'agent_type': agent_type, 'agent_id': agent.id})
         return agent
 
     @classmethod
@@ -214,14 +197,13 @@ class AgentDbMixin(ext_agent.AgentPluginBase):
                     return self._create_or_update_agent(context, agent)
 
 
-class AgentExtRpcCallback(n_rpc.RpcCallback):
+class AgentExtRpcCallback(object):
     """Processes the rpc report in plugin implementations."""
 
     RPC_API_VERSION = '1.0'
     START_TIME = timeutils.utcnow()
 
     def __init__(self, plugin=None):
-        super(AgentExtRpcCallback, self).__init__()
         self.plugin = plugin
 
     def report_state(self, context, **kwargs):

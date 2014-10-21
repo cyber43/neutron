@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc.
 # All Rights Reserved
 #
@@ -15,14 +17,14 @@
 
 import hashlib
 
-from neutron.api.v2 import attributes
+from neutron.api.v2.attributes import is_attr_set
 from neutron.openstack.common import log
-from neutron import version
+from neutron.version import version_info
 
 
 LOG = log.getLogger(__name__)
 MAX_DISPLAY_NAME_LEN = 40
-NEUTRON_VERSION = version.version_info.release_string()
+NEUTRON_VERSION = version_info.release_string()
 
 
 # Allowed network types for the NSX Plugin
@@ -40,7 +42,7 @@ def get_tags(**kwargs):
     tags = ([dict(tag=value, scope=key)
             for key, value in kwargs.iteritems()])
     tags.append({"tag": NEUTRON_VERSION, "scope": "quantum"})
-    return sorted(tags)
+    return tags
 
 
 def device_id_to_vm_id(device_id, obfuscate=False):
@@ -59,8 +61,7 @@ def device_id_to_vm_id(device_id, obfuscate=False):
 
 
 def check_and_truncate(display_name):
-    if (attributes.is_attr_set(display_name) and
-            len(display_name) > MAX_DISPLAY_NAME_LEN):
+    if is_attr_set(display_name) and len(display_name) > MAX_DISPLAY_NAME_LEN:
         LOG.debug(_("Specified name:'%s' exceeds maximum length. "
                     "It will be truncated on NSX"), display_name)
         return display_name[:MAX_DISPLAY_NAME_LEN]

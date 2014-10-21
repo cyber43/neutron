@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012, Nachi Ueno, NTT MCL, Inc.
 # All Rights Reserved.
 #
@@ -18,17 +20,19 @@ from oslo.config import cfg
 from neutron.common import exceptions as exc
 from neutron.common import topics
 from neutron import context as neutron_context
+from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
 from neutron.db import external_net_db
 from neutron.db import extraroute_db
 from neutron.db import l3_db
 from neutron.db import models_v2
-from neutron.extensions import flavor as ext_flavor
+from neutron.extensions.flavor import (FLAVOR_NETWORK, FLAVOR_ROUTER)
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 from neutron.plugins.metaplugin.common import config  # noqa
 from neutron.plugins.metaplugin import meta_db_v2
-from neutron.plugins.metaplugin import meta_models_v2
+from neutron.plugins.metaplugin.meta_models_v2 import (NetworkFlavor,
+                                                       RouterFlavor)
 
 
 LOG = logging.getLogger(__name__)
@@ -36,21 +40,19 @@ LOG = logging.getLogger(__name__)
 
 # Hooks used to select records which belong a target plugin.
 def _meta_network_model_hook(context, original_model, query):
-    return query.outerjoin(meta_models_v2.NetworkFlavor,
-                           meta_models_v2.NetworkFlavor.network_id ==
-                           models_v2.Network.id)
+    return query.outerjoin(NetworkFlavor,
+                           NetworkFlavor.network_id == models_v2.Network.id)
 
 
 def _meta_port_model_hook(context, original_model, query):
-    return query.join(meta_models_v2.NetworkFlavor,
-                      meta_models_v2.NetworkFlavor.network_id ==
-                      models_v2.Port.network_id)
+    return query.join(NetworkFlavor,
+                      NetworkFlavor.network_id == models_v2.Port.network_id)
 
 
 def _meta_flavor_filter_hook(query, filters):
-    if ext_flavor.FLAVOR_NETWORK in filters:
-        return query.filter(meta_models_v2.NetworkFlavor.flavor ==
-                            filters[ext_flavor.FLAVOR_NETWORK][0])
+    if FLAVOR_NETWORK in filters:
+        return query.filter(NetworkFlavor.flavor ==
+                            filters[FLAVOR_NETWORK][0])
     return query
 
 
@@ -83,6 +85,9 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 return False
 
         cfg._is_opt_registered = _is_opt_registered
+
+        # Keep existing tables if multiple plugin use same table name.
+        db.model_base.NeutronBase.__table_args__ = {'keep_existing': True}
 
         self.plugins = {}
 
@@ -191,14 +196,14 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 return getattr(plugin, key)
 
         # if no plugin support the method, then raise
-        raise AttributeError()
+        raise AttributeError
 
     def _extend_network_dict(self, context, network):
         flavor = self._get_flavor_by_network_id(context, network['id'])
-        network[ext_flavor.FLAVOR_NETWORK] = flavor
+        network[FLAVOR_NETWORK] = flavor
 
-    def start_rpc_listeners(self):
-        return self.plugins[self.rpc_flavor].start_rpc_listeners()
+    def start_rpc_listener(self):
+        return self.plugins[self.rpc_flavor].start_rpc_listener()
 
     def rpc_workers_supported(self):
         #NOTE: If a plugin which supports multiple RPC workers is desired
@@ -208,7 +213,7 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
     def create_network(self, context, network):
         n = network['network']
-        flavor = n.get(ext_flavor.FLAVOR_NETWORK)
+        flavor = n.get(FLAVOR_NETWORK)
         if str(flavor) not in self.plugins:
             flavor = self.default_flavor
         plugin = self._get_plugin(flavor)
@@ -242,7 +247,7 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         plugin = self._get_plugin(flavor)
         net = plugin.get_network(context, id, fields)
         net['id'] = id
-        if not fields or ext_flavor.FLAVOR_NETWORK in fields:
+        if not fields or FLAVOR_NETWORK in fields:
             self._extend_network_dict(context, net)
         if fields and 'id' not in fields:
             del net['id']
@@ -251,8 +256,8 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def get_networks(self, context, filters=None, fields=None):
         nets = []
         for flavor, plugin in self.plugins.items():
-            if (filters and ext_flavor.FLAVOR_NETWORK in filters and
-                    not flavor in filters[ext_flavor.FLAVOR_NETWORK]):
+            if (filters and FLAVOR_NETWORK in filters and
+                    not flavor in filters[FLAVOR_NETWORK]):
                 continue
             if filters:
                 #NOTE: copy each time since a target plugin may modify
@@ -260,11 +265,11 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 plugin_filters = filters.copy()
             else:
                 plugin_filters = {}
-            plugin_filters[ext_flavor.FLAVOR_NETWORK] = [flavor]
+            plugin_filters[FLAVOR_NETWORK] = [flavor]
             plugin_nets = plugin.get_networks(context, plugin_filters, fields)
             for net in plugin_nets:
-                if not fields or ext_flavor.FLAVOR_NETWORK in fields:
-                    net[ext_flavor.FLAVOR_NETWORK] = flavor
+                if not fields or FLAVOR_NETWORK in fields:
+                    net[FLAVOR_NETWORK] = flavor
                 nets.append(net)
         return nets
 
@@ -281,7 +286,7 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def create_port(self, context, port):
         p = port['port']
         if 'network_id' not in p:
-            raise exc.NotFound()
+            raise exc.NotFound
         plugin = self._get_plugin_by_network_id(context, p['network_id'])
         return plugin.create_port(context, port)
 
@@ -320,7 +325,7 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 plugin_filters = filters.copy()
             else:
                 plugin_filters = {}
-            plugin_filters[ext_flavor.FLAVOR_NETWORK] = [flavor]
+            plugin_filters[FLAVOR_NETWORK] = [flavor]
             ports = plugin.get_ports(context, plugin_filters, fields)
             all_ports += ports
         return all_ports
@@ -328,7 +333,7 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def create_subnet(self, context, subnet):
         s = subnet['subnet']
         if 'network_id' not in s:
-            raise exc.NotFound()
+            raise exc.NotFound
         plugin = self._get_plugin_by_network_id(context,
                                                 s['network_id'])
         return plugin.create_subnet(context, subnet)
@@ -347,11 +352,11 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _extend_router_dict(self, context, router):
         flavor = self._get_flavor_by_router_id(context, router['id'])
-        router[ext_flavor.FLAVOR_ROUTER] = flavor
+        router[FLAVOR_ROUTER] = flavor
 
     def create_router(self, context, router):
         r = router['router']
-        flavor = r.get(ext_flavor.FLAVOR_ROUTER)
+        flavor = r.get(FLAVOR_ROUTER)
         if str(flavor) not in self.l3_plugins:
             flavor = self.default_l3_flavor
         plugin = self._get_l3_plugin(flavor)
@@ -385,20 +390,20 @@ class MetaPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         flavor = meta_db_v2.get_flavor_by_router(context.session, id)
         plugin = self._get_l3_plugin(flavor)
         router = plugin.get_router(context, id, fields)
-        if not fields or ext_flavor.FLAVOR_ROUTER in fields:
+        if not fields or FLAVOR_ROUTER in fields:
             self._extend_router_dict(context, router)
         return router
 
     def get_routers_with_flavor(self, context, filters=None,
                                 fields=None):
         collection = self._model_query(context, l3_db.Router)
-        r_model = meta_models_v2.RouterFlavor
+        r_model = RouterFlavor
         collection = collection.join(r_model,
                                      l3_db.Router.id == r_model.router_id)
         if filters:
             for key, value in filters.iteritems():
-                if key == ext_flavor.FLAVOR_ROUTER:
-                    column = meta_models_v2.RouterFlavor.flavor
+                if key == FLAVOR_ROUTER:
+                    column = RouterFlavor.flavor
                 else:
                     column = getattr(l3_db.Router, key, None)
                 if column:

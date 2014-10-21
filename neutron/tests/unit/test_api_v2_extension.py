@@ -15,6 +15,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Isaku Yamahata, Intel Corporation.
 
 import uuid
 
@@ -25,15 +27,14 @@ import webtest
 
 from neutron.api import extensions
 from neutron.api.v2 import attributes
+from neutron.common import config
 from neutron import quota
 from neutron.tests.unit import test_api_v2
 from neutron.tests.unit import test_extensions
 from neutron.tests.unit import testlib_api
-from neutron.tests.unit import testlib_plugin
 
 
-class ExtensionTestCase(testlib_api.WebTestCase,
-                        testlib_plugin.PluginSetupHelper):
+class ExtensionTestCase(testlib_api.WebTestCase):
     def _resotre_attr_map(self):
         attributes.RESOURCE_ATTRIBUTE_MAP = self._saved_attr_map
 
@@ -59,7 +60,8 @@ class ExtensionTestCase(testlib_api.WebTestCase,
         self.addCleanup(self._resotre_attr_map)
 
         # Create the default configurations
-        self.config_parse()
+        args = ['--config-file', test_api_v2.etcdir('neutron.conf.test')]
+        config.parse(args)
 
         #just stubbing core plugin with plugin
         self.setup_coreplugin(plugin)

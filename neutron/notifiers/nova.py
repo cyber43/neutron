@@ -14,7 +14,6 @@
 #    under the License.
 
 import eventlet
-from novaclient import exceptions as nova_exceptions
 import novaclient.v1_1.client as nclient
 from novaclient.v1_1.contrib import server_external_events
 from oslo.config import cfg
@@ -41,20 +40,14 @@ class Notifier(object):
     def __init__(self):
         # TODO(arosen): we need to cache the endpoints and figure out
         # how to deal with different regions here....
-        if cfg.CONF.nova_admin_tenant_id:
-            bypass_url = "%s/%s" % (cfg.CONF.nova_url,
-                                    cfg.CONF.nova_admin_tenant_id)
-        else:
-            bypass_url = None
-
+        bypass_url = "%s/%s" % (cfg.CONF.nova_url,
+                                cfg.CONF.nova_admin_tenant_id)
         self.nclient = nclient.Client(
             username=cfg.CONF.nova_admin_username,
             api_key=cfg.CONF.nova_admin_password,
-            project_id=cfg.CONF.nova_admin_tenant_name,
+            project_id=None,
             tenant_id=cfg.CONF.nova_admin_tenant_id,
             auth_url=cfg.CONF.nova_admin_auth_url,
-            cacert=cfg.CONF.nova_ca_certificates_file,
-            insecure=cfg.CONF.nova_api_insecure,
             bypass_url=bypass_url,
             region_name=cfg.CONF.nova_region_name,
             extensions=[server_external_events])
@@ -79,7 +72,7 @@ class Notifier(object):
         If a thread is already alive and waiting, this call will simply queue
         the event and return leaving it up to the thread to send it.
 
-        :param event: the event that occurred.
+        :param event: the event that occured.
         """
         if not event:
             return
@@ -114,7 +107,7 @@ class Notifier(object):
     @property
     def _plugin(self):
         # NOTE(arosen): this cannot be set in __init__ currently since
-        # this class is initialized at the same time as NeutronManager()
+        # this class is initalized at the same time as NeutronManager()
         # which is decorated with synchronized()
         if not hasattr(self, '_plugin_ref'):
             self._plugin_ref = manager.NeutronManager.get_plugin()
@@ -124,7 +117,7 @@ class Notifier(object):
                             returned_obj):
         """Called when a network change is made that nova cares about.
 
-        :param action: the event that occurred.
+        :param action: the event that occured.
         :param original_obj: the previous value of resource before action.
         :param returned_obj: the body returned to client as result of action.
         """
@@ -215,19 +208,17 @@ class Notifier(object):
         port._notify_event = None
 
     def send_events(self):
-        if not self.pending_events:
-            return
+        batched_events = []
+        for event in range(len(self.pending_events)):
+            batched_events.append(self.pending_events.pop())
 
-        batched_events = self.pending_events
-        self.pending_events = []
+        if not batched_events:
+            return
 
         LOG.debug(_("Sending events: %s"), batched_events)
         try:
             response = self.nclient.server_external_events.create(
                 batched_events)
-        except nova_exceptions.NotFound:
-            LOG.warning(_("Nova returned NotFound for event: %s"),
-                        batched_events)
         except Exception:
             LOG.exception(_("Failed to notify nova on events: %s"),
                           batched_events)

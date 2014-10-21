@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2012 NEC Corporation.  All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,13 +13,14 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Ryota MIBU
 
+import json
 import time
 
 import requests
 
 from neutron.openstack.common import excutils
-from neutron.openstack.common import jsonutils
 from neutron.openstack.common import log as logging
 from neutron.plugins.nec.common import config
 from neutron.plugins.nec.common import exceptions as nexc
@@ -79,7 +82,7 @@ class OFCClient(object):
                   {'host': self.host, 'port': self.port,
                    'method': method, 'action': action, 'body': body})
         if type(body) is dict:
-            body = jsonutils.dumps(body)
+            body = json.dumps(body)
         try:
             res = self._get_response(method, action, body)
             data = res.text
@@ -89,7 +92,7 @@ class OFCClient(object):
 
             # Try to decode JSON data if possible.
             try:
-                data = jsonutils.loads(data)
+                data = json.loads(data)
             except (ValueError, TypeError):
                 pass
 

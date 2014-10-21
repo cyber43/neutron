@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Big Switch Networks, Inc.  All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -13,19 +15,21 @@
 #    under the License.
 #
 # Adapted from neutron.tests.unit.test_l3_plugin
+# @author: Sumit Naiksatam, sumitnaiksatam@gmail.com
+#
 
 import contextlib
 import copy
 
-import mock
+from mock import patch
 from oslo.config import cfg
-from six import moves
+from six.moves import xrange
 from webob import exc
 
-from neutron.common import test_lib
+from neutron.common.test_lib import test_config
 from neutron import context
 from neutron.extensions import l3
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.openstack.common import uuidutils
 from neutron.plugins.bigswitch.extensions import routerrule
 from neutron.tests.unit.bigswitch import fake_server
@@ -35,7 +39,6 @@ from neutron.tests.unit import test_extension_extradhcpopts as test_extradhcp
 from neutron.tests.unit import test_l3_plugin
 
 
-HTTPCON = 'neutron.plugins.bigswitch.servermanager.httplib.HTTPConnection'
 _uuid = uuidutils.generate_uuid
 
 
@@ -61,41 +64,29 @@ class DHCPOptsTestCase(test_base.BigSwitchTestBase,
         self.setup_config_files()
         super(test_extradhcp.ExtraDhcpOptDBTestCase,
               self).setUp(plugin=self._plugin_name)
-        self.startHttpPatch()
 
 
-class RouterDBTestBase(test_base.BigSwitchTestBase,
-                       test_l3_plugin.L3BaseForIntTests,
-                       test_l3_plugin.L3NatTestCaseMixin):
-
-    mock_rescheduling = False
+class RouterDBTestCase(test_base.BigSwitchTestBase,
+                       test_l3_plugin.L3NatDBIntTestCase):
 
     def setUp(self):
         self.setup_patches()
         self.setup_config_files()
         ext_mgr = RouterRulesTestExtensionManager()
-        service_plugins = {'L3_ROUTER_NAT': self._l3_plugin_name}
-        super(RouterDBTestBase, self).setUp(plugin=self._plugin_name,
-                                            ext_mgr=ext_mgr,
-                                            service_plugins=service_plugins)
+        super(RouterDBTestCase, self).setUp(plugin=self._plugin_name,
+                                            ext_mgr=ext_mgr)
         cfg.CONF.set_default('allow_overlapping_ips', False)
-        self.plugin_obj = manager.NeutronManager.get_service_plugins().get(
-            'L3_ROUTER_NAT')
-        self.startHttpPatch()
+        self.plugin_obj = NeutronManager.get_plugin()
 
     def tearDown(self):
-        super(RouterDBTestBase, self).tearDown()
-        del test_lib.test_config['config_files']
-
-
-class RouterDBTestCase(RouterDBTestBase,
-                       test_l3_plugin.L3NatDBIntTestCase):
+        super(RouterDBTestCase, self).tearDown()
+        del test_config['config_files']
 
     def test_router_remove_router_interface_wrong_subnet_returns_400(self):
         with self.router() as r:
             with self.subnet() as s:
                 with self.subnet(cidr='10.0.10.0/24') as s1:
-                    with self.port(subnet=s1) as p:
+                    with self.port(subnet=s1, no_delete=True) as p:
                         self._router_interface_action('add',
                                                       r['router']['id'],
                                                       None,
@@ -114,7 +105,7 @@ class RouterDBTestCase(RouterDBTestBase,
     def test_router_remove_router_interface_wrong_port_returns_404(self):
         with self.router() as r:
             with self.subnet() as s:
-                with self.port(subnet=s) as p:
+                with self.port(subnet=s, no_delete=True) as p:
                     self._router_interface_action('add',
                                                   r['router']['id'],
                                                   None,
@@ -172,9 +163,9 @@ class RouterDBTestCase(RouterDBTestBase,
                         net_id=psub['subnet']['network_id'],
                         port_id=p1['port']['id'],
                         tenant_id=tenant1_id)
-                    self.httpPatch.stop()
-                    multiFloatPatch = mock.patch(
-                        HTTPCON,
+                    multiFloatPatch = patch(
+                        'httplib.HTTPConnection',
+                        create=True,
                         new=fake_server.VerifyMultiTenantFloatingIP)
                     multiFloatPatch.start()
                     fl2 = self._make_floatingip_for_tenant_port(
@@ -182,7 +173,6 @@ class RouterDBTestCase(RouterDBTestBase,
                         port_id=p2['port']['id'],
                         tenant_id=tenant2_id)
                     multiFloatPatch.stop()
-                    self.httpPatch.start()
                     self._delete('floatingips', fl1['floatingip']['id'])
                     self._delete('floatingips', fl2['floatingip']['id'])
                     self._router_interface_action(
@@ -260,7 +250,7 @@ class RouterDBTestCase(RouterDBTestBase,
     def test_router_remove_interface_wrong_subnet_returns_400(self):
         with self.router() as r:
             with self.subnet(cidr='10.0.10.0/24') as s:
-                with self.port() as p:
+                with self.port(no_delete=True) as p:
                     self._router_interface_action('add',
                                                   r['router']['id'],
                                                   None,
@@ -279,7 +269,7 @@ class RouterDBTestCase(RouterDBTestBase,
     def test_router_remove_interface_wrong_port_returns_404(self):
         with self.router() as r:
             with self.subnet(cidr='10.0.10.0/24'):
-                with self.port() as p:
+                with self.port(no_delete=True) as p:
                     self._router_interface_action('add',
                                                   r['router']['id'],
                                                   None,
@@ -302,7 +292,7 @@ class RouterDBTestCase(RouterDBTestBase,
 
     def test_send_data(self):
         fmt = 'json'
-        plugin_obj = manager.NeutronManager.get_plugin()
+        plugin_obj = NeutronManager.get_plugin()
 
         with self.router() as r:
             r_id = r['router']['id']
@@ -503,7 +493,7 @@ class RouterDBTestCase(RouterDBTestBase,
         cfg.CONF.set_override('max_router_rules', 10, 'ROUTER')
         with self.router() as r:
             rules = []
-            for i in moves.xrange(1, 12):
+            for i in xrange(1, 12):
                 rule = {'source': 'any', 'nexthops': [],
                         'destination': '1.1.1.' + str(i) + '/32',
                         'action': 'permit'}
@@ -514,30 +504,34 @@ class RouterDBTestCase(RouterDBTestBase,
 
     def test_rollback_on_router_create(self):
         tid = test_api_v2._uuid()
-        self.httpPatch.stop()
-        with mock.patch(HTTPCON, new=fake_server.HTTPConnectionMock500):
-            self._create_router('json', tid)
+        self.errhttpPatch = patch('httplib.HTTPConnection', create=True,
+                                  new=fake_server.HTTPConnectionMock500)
+        self.errhttpPatch.start()
+        self._create_router('json', tid)
+        self.errhttpPatch.stop()
         self.assertTrue(len(self._get_routers(tid)) == 0)
 
     def test_rollback_on_router_update(self):
         with self.router() as r:
             data = {'router': {'name': 'aNewName'}}
-            self.httpPatch.stop()
-            with mock.patch(HTTPCON, new=fake_server.HTTPConnectionMock500):
-                self.new_update_request(
-                    'routers', data, r['router']['id']).get_response(self.api)
-            self.httpPatch.start()
+            self.errhttpPatch = patch('httplib.HTTPConnection', create=True,
+                                      new=fake_server.HTTPConnectionMock500)
+            self.errhttpPatch.start()
+            self.new_update_request('routers', data,
+                                    r['router']['id']).get_response(self.api)
+            self.errhttpPatch.stop()
             updatedr = self._get_routers(r['router']['tenant_id'])[0]
             # name should have stayed the same due to failure
             self.assertEqual(r['router']['name'], updatedr['name'])
 
     def test_rollback_on_router_delete(self):
         with self.router() as r:
-            self.httpPatch.stop()
-            with mock.patch(HTTPCON, new=fake_server.HTTPConnectionMock500):
-                self._delete('routers', r['router']['id'],
-                             expected_code=exc.HTTPInternalServerError.code)
-            self.httpPatch.start()
+            self.errhttpPatch = patch('httplib.HTTPConnection', create=True,
+                                      new=fake_server.HTTPConnectionMock500)
+            self.errhttpPatch.start()
+            self._delete('routers', r['router']['id'],
+                         expected_code=exc.HTTPInternalServerError.code)
+            self.errhttpPatch.stop()
             self.assertEqual(r['router']['id'],
                              self._get_routers(r['router']['tenant_id']
                                                )[0]['id'])

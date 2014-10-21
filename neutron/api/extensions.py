@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2011 OpenStack Foundation.
 # Copyright 2011 Justin Santa Barbara
 # All Rights Reserved.
@@ -14,7 +16,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import abc
+from abc import ABCMeta
 import imp
 import itertools
 import os
@@ -28,7 +30,7 @@ import webob.exc
 from neutron.api.v2 import attributes
 from neutron.common import exceptions
 import neutron.extensions
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.openstack.common import log as logging
 from neutron import policy
 from neutron import wsgi
@@ -37,7 +39,7 @@ from neutron import wsgi
 LOG = logging.getLogger(__name__)
 
 
-@six.add_metaclass(abc.ABCMeta)
+@six.add_metaclass(ABCMeta)
 class PluginInterface(object):
 
     @classmethod
@@ -51,10 +53,6 @@ class PluginInterface(object):
         marked with the abstractmethod decorator is
         provided by the plugin class.
         """
-
-        if not cls.__abstractmethods__:
-            return NotImplemented
-
         for method in cls.__abstractmethods__:
             if any(method in base.__dict__ for base in klass.__mro__):
                 continue
@@ -149,7 +147,7 @@ class ExtensionDescriptor(object):
     def get_plugin_interface(self):
         """Returns an abstract class which defines contract for the plugin.
 
-        The abstract class should inherit from extensions.PluginInterface,
+        The abstract class should inherit from extesnions.PluginInterface,
         Methods in this abstract class  should be decorated as abstractmethod
         """
         return None
@@ -518,6 +516,12 @@ class ExtensionManager(object):
         except AttributeError as ex:
             LOG.exception(_("Exception loading extension: %s"), unicode(ex))
             return False
+        if hasattr(extension, 'check_env'):
+            try:
+                extension.check_env()
+            except exceptions.InvalidExtensionEnv as ex:
+                LOG.warn(_("Exception loading extension: %s"), unicode(ex))
+                return False
         return True
 
     def _load_all_extensions(self):
@@ -542,7 +546,7 @@ class ExtensionManager(object):
         # Neutron Servers
         for f in sorted(os.listdir(path)):
             try:
-                LOG.debug(_('Loading extension file: %s'), f)
+                LOG.info(_('Loading extension file: %s'), f)
                 mod_name, file_ext = os.path.splitext(os.path.split(f)[-1])
                 ext_path = os.path.join(path, f)
                 if file_ext.lower() == '.py' and not mod_name.startswith('_'):
@@ -617,7 +621,7 @@ class PluginAwareExtensionManager(ExtensionManager):
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls(get_extensions_path(),
-                                manager.NeutronManager.get_service_plugins())
+                                NeutronManager.get_service_plugins())
         return cls._instance
 
     def check_if_plugin_extensions_loaded(self):
@@ -679,6 +683,6 @@ def get_extensions_path():
 
 
 def append_api_extensions_path(paths):
-    paths = list(set([cfg.CONF.api_extensions_path] + paths))
+    paths = [cfg.CONF.api_extensions_path] + paths
     cfg.CONF.set_override('api_extensions_path',
                           ':'.join([p for p in paths if p]))

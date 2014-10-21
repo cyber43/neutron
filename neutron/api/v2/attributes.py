@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -479,11 +481,6 @@ def convert_to_boolean(data):
     raise n_exc.InvalidInput(error_message=msg)
 
 
-def convert_to_boolean_if_not_none(data):
-    if data is not None:
-        return convert_to_boolean(data)
-
-
 def convert_to_int(data):
     try:
         return int(data)
@@ -707,7 +704,8 @@ RESOURCE_ATTRIBUTE_MAP = {
                        'default': ATTR_NOT_SPECIFIED,
                        'validate': {'type:ip_address_or_none': None},
                        'is_visible': True},
-        'allocation_pools': {'allow_post': True, 'allow_put': True,
+        #TODO(salvatore-orlando): Enable PUT on allocation_pools
+        'allocation_pools': {'allow_post': True, 'allow_put': False,
                              'default': ATTR_NOT_SPECIFIED,
                              'validate': {'type:ip_pools': None},
                              'is_visible': True},
@@ -729,15 +727,17 @@ RESOURCE_ATTRIBUTE_MAP = {
                         'default': True,
                         'convert_to': convert_to_boolean,
                         'is_visible': True},
-        'ipv6_ra_mode': {'allow_post': True, 'allow_put': False,
+        # NOTE: The following two attributes will be made visible once IPv6
+        # will be fully supported
+        'ipv6_ra_mode': {'allow_post': False, 'allow_put': False,
                          'default': ATTR_NOT_SPECIFIED,
                          'validate': {'type:values': constants.IPV6_MODES},
-                         'is_visible': True},
-        'ipv6_address_mode': {'allow_post': True, 'allow_put': False,
+                         'is_visible': False},
+        'ipv6_address_mode': {'allow_post': False, 'allow_put': False,
                               'default': ATTR_NOT_SPECIFIED,
                               'validate': {'type:values':
                                            constants.IPV6_MODES},
-                              'is_visible': True},
+                              'is_visible': False},
         SHARED: {'allow_post': False,
                  'allow_put': False,
                  'default': False,

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2012 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import socket
 
@@ -58,6 +62,7 @@ class TestNetworkMetadataProxyHandler(base.BaseTestCase):
         super(TestNetworkMetadataProxyHandler, self).setUp()
         self.log_p = mock.patch.object(ns_proxy, 'LOG')
         self.log = self.log_p.start()
+        self.addCleanup(self.log_p.stop)
 
         self.handler = ns_proxy.NetworkMetadataProxyHandler('router_id')
 
@@ -148,15 +153,15 @@ class TestNetworkMetadataProxyHandler(base.BaseTestCase):
                              'application/json')
             self.assertEqual(retval.body, '{}')
 
-    def _test_proxy_request_network_4xx(self, status, method, expected):
+    def test_proxy_request_network_404(self):
         self.handler.network_id = 'network_id'
 
-        resp = mock.Mock(status=status)
+        resp = mock.Mock(status=404)
         with mock.patch('httplib2.Http') as mock_http:
             mock_http.return_value.request.return_value = (resp, '')
 
             retval = self.handler._proxy_request('192.168.1.1',
-                                                 method,
+                                                 'GET',
                                                  '/latest/meta-data',
                                                  '',
                                                  '')
@@ -164,7 +169,7 @@ class TestNetworkMetadataProxyHandler(base.BaseTestCase):
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
-                    method=method,
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Neutron-Network-ID': 'network_id'
@@ -174,19 +179,35 @@ class TestNetworkMetadataProxyHandler(base.BaseTestCase):
                 )]
             )
 
-            self.assertIsInstance(retval, expected)
-
-    def test_proxy_request_network_400(self):
-        self._test_proxy_request_network_4xx(
-            400, 'GET', webob.exc.HTTPBadRequest)
-
-    def test_proxy_request_network_404(self):
-        self._test_proxy_request_network_4xx(
-            404, 'GET', webob.exc.HTTPNotFound)
+            self.assertIsInstance(retval, webob.exc.HTTPNotFound)
 
     def test_proxy_request_network_409(self):
-        self._test_proxy_request_network_4xx(
-            409, 'POST', webob.exc.HTTPConflict)
+        self.handler.network_id = 'network_id'
+
+        resp = mock.Mock(status=409)
+        with mock.patch('httplib2.Http') as mock_http:
+            mock_http.return_value.request.return_value = (resp, '')
+
+            retval = self.handler._proxy_request('192.168.1.1',
+                                                 'POST',
+                                                 '/latest/meta-data',
+                                                 '',
+                                                 '')
+
+            mock_http.assert_has_calls([
+                mock.call().request(
+                    'http://169.254.169.254/latest/meta-data',
+                    method='POST',
+                    headers={
+                        'X-Forwarded-For': '192.168.1.1',
+                        'X-Neutron-Network-ID': 'network_id'
+                    },
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
+                )]
+            )
+
+            self.assertIsInstance(retval, webob.exc.HTTPConflict)
 
     def test_proxy_request_network_500(self):
         self.handler.network_id = 'network_id'
@@ -292,42 +313,46 @@ class TestProxyDaemon(base.BaseTestCase):
 
     def test_main(self):
         with mock.patch.object(ns_proxy, 'ProxyDaemon') as daemon:
-            with mock.patch.object(ns_proxy, 'config') as config:
-                with mock.patch.object(ns_proxy, 'cfg') as cfg:
-                    with mock.patch.object(utils, 'cfg') as utils_cfg:
-                        cfg.CONF.router_id = 'router_id'
-                        cfg.CONF.network_id = None
-                        cfg.CONF.metadata_port = 9697
-                        cfg.CONF.pid_file = 'pidfile'
-                        cfg.CONF.daemonize = True
-                        utils_cfg.CONF.log_opt_values.return_value = None
-                        ns_proxy.main()
+            with mock.patch('eventlet.monkey_patch') as eventlet:
+                with mock.patch.object(ns_proxy, 'config') as config:
+                    with mock.patch.object(ns_proxy, 'cfg') as cfg:
+                        with mock.patch.object(utils, 'cfg') as utils_cfg:
+                            cfg.CONF.router_id = 'router_id'
+                            cfg.CONF.network_id = None
+                            cfg.CONF.metadata_port = 9697
+                            cfg.CONF.pid_file = 'pidfile'
+                            cfg.CONF.daemonize = True
+                            utils_cfg.CONF.log_opt_values.return_value = None
+                            ns_proxy.main()
 
-                        self.assertTrue(config.setup_logging.called)
-                        daemon.assert_has_calls([
-                            mock.call('pidfile', 9697,
-                                      router_id='router_id',
-                                      network_id=None),
-                            mock.call().start()]
-                        )
+                            self.assertTrue(eventlet.called)
+                            self.assertTrue(config.setup_logging.called)
+                            daemon.assert_has_calls([
+                                mock.call('pidfile', 9697,
+                                          router_id='router_id',
+                                          network_id=None),
+                                mock.call().start()]
+                            )
 
     def test_main_dont_fork(self):
         with mock.patch.object(ns_proxy, 'ProxyDaemon') as daemon:
-            with mock.patch.object(ns_proxy, 'config') as config:
-                with mock.patch.object(ns_proxy, 'cfg') as cfg:
-                    with mock.patch.object(utils, 'cfg') as utils_cfg:
-                        cfg.CONF.router_id = 'router_id'
-                        cfg.CONF.network_id = None
-                        cfg.CONF.metadata_port = 9697
-                        cfg.CONF.pid_file = 'pidfile'
-                        cfg.CONF.daemonize = False
-                        utils_cfg.CONF.log_opt_values.return_value = None
-                        ns_proxy.main()
+            with mock.patch('eventlet.monkey_patch') as eventlet:
+                with mock.patch.object(ns_proxy, 'config') as config:
+                    with mock.patch.object(ns_proxy, 'cfg') as cfg:
+                        with mock.patch.object(utils, 'cfg') as utils_cfg:
+                            cfg.CONF.router_id = 'router_id'
+                            cfg.CONF.network_id = None
+                            cfg.CONF.metadata_port = 9697
+                            cfg.CONF.pid_file = 'pidfile'
+                            cfg.CONF.daemonize = False
+                            utils_cfg.CONF.log_opt_values.return_value = None
+                            ns_proxy.main()
 
-                        self.assertTrue(config.setup_logging.called)
-                        daemon.assert_has_calls([
-                            mock.call('pidfile', 9697,
-                                      router_id='router_id',
-                                      network_id=None),
-                            mock.call().run()]
-                        )
+                            self.assertTrue(eventlet.called)
+                            self.assertTrue(config.setup_logging.called)
+                            daemon.assert_has_calls([
+                                mock.call('pidfile', 9697,
+                                          router_id='router_id',
+                                          network_id=None),
+                                mock.call().run()]
+                            )

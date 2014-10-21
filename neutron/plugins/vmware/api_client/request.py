@@ -15,7 +15,8 @@
 # under the License.
 #
 
-import abc
+from abc import ABCMeta
+from abc import abstractmethod
 import copy
 import eventlet
 import httplib
@@ -26,11 +27,12 @@ import six.moves.urllib.parse as urlparse
 
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
-from neutron.plugins.vmware import api_client
+from neutron.plugins.vmware.api_client import ctrl_conn_to_str
 
 LOG = logging.getLogger(__name__)
 
-DEFAULT_HTTP_TIMEOUT = 30
+DEFAULT_REQUEST_TIMEOUT = 30
+DEFAULT_HTTP_TIMEOUT = 10
 DEFAULT_RETRIES = 2
 DEFAULT_REDIRECTS = 2
 DEFAULT_API_REQUEST_POOL_SIZE = 1000
@@ -38,7 +40,7 @@ DEFAULT_MAXIMUM_REQUEST_ID = 4294967295
 DOWNLOAD_TIMEOUT = 180
 
 
-@six.add_metaclass(abc.ABCMeta)
+@six.add_metaclass(ABCMeta)
 class ApiRequest(object):
     '''An abstract baseclass for all ApiRequest implementations.
 
@@ -62,15 +64,15 @@ class ApiRequest(object):
         httplib.SERVICE_UNAVAILABLE
     ]
 
-    @abc.abstractmethod
+    @abstractmethod
     def start(self):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def join(self):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def copy(self):
         pass
 
@@ -86,10 +88,8 @@ class ApiRequest(object):
             return error
 
         url = self._url
-        LOG.debug(_("[%(rid)d] Issuing - request url: %(conn)s "
-                    "body: %(body)s"),
-                  {'rid': self._rid(), 'conn': self._request_str(conn, url),
-                   'body': self._body})
+        LOG.debug(_("[%(rid)d] Issuing - request %(conn)s"),
+                  {'rid': self._rid(), 'conn': self._request_str(conn, url)})
         issued_time = time.time()
         is_conn_error = False
         is_conn_service_unavail = False
@@ -147,15 +147,17 @@ class ApiRequest(object):
 
                     if cookie is None and self._url != "/ws.v1/login":
                         # The connection still has no valid cookie despite
-                        # attempts to authenticate and the request has failed
+                        # attemps to authenticate and the request has failed
                         # with unauthorized status code. If this isn't a
                         # a request to authenticate, we should abort the
                         # request since there is no point in retrying.
                         self._abort = True
+                    else:
+                        # If request is unauthorized, clear the session cookie
+                        # for the current provider so that subsequent requests
+                        # to the same provider triggers re-authentication.
+                        self._api_client.set_auth_cookie(conn, None)
 
-                    # If request is unauthorized, clear the session cookie
-                    # for the current provider so that subsequent requests
-                    # to the same provider triggers re-authentication.
                     self._api_client.set_auth_cookie(conn, None)
                 elif response.status == httplib.SERVICE_UNAVAILABLE:
                     is_conn_service_unavail = True
@@ -282,5 +284,4 @@ class ApiRequest(object):
 
     def _request_str(self, conn, url):
         '''Return string representation of connection.'''
-        return "%s %s/%s" % (self._method, api_client.ctrl_conn_to_str(conn),
-                             url)
+        return "%s %s/%s" % (self._method, ctrl_conn_to_str(conn), url)

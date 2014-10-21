@@ -14,6 +14,9 @@
 #    under the License.
 
 
+import mock
+from oslo.config import cfg
+
 from neutron.common import constants
 from neutron.extensions import portbindings
 from neutron.plugins.ml2 import driver_api as api
@@ -91,11 +94,12 @@ class MlnxMechanismVnicTypeTestCase(MlnxMechanismBaseTestCase,
                                            self.VIF_TYPE)
 
 
-class MlnxMechanismVifDetailsTestCase(MlnxMechanismBaseTestCase):
+class MlnxMechanismProfileTestCase(MlnxMechanismBaseTestCase):
     def setUp(self):
-        super(MlnxMechanismVifDetailsTestCase, self).setUp()
+        cfg.CONF.set_override('apply_profile_patch', True, 'ESWITCH')
+        super(MlnxMechanismProfileTestCase, self).setUp()
 
-    def test_vif_details_contains_physical_net(self):
+    def test_profile_contains_physical_net(self):
         VLAN_SEGMENTS = [{api.ID: 'vlan_segment_id',
                           api.NETWORK_TYPE: 'vlan',
                           api.PHYSICAL_NETWORK: 'fake_physical_network',
@@ -105,8 +109,10 @@ class MlnxMechanismVifDetailsTestCase(MlnxMechanismBaseTestCase):
                                        self.AGENTS,
                                        VLAN_SEGMENTS,
                                        portbindings.VNIC_DIRECT)
+        context._binding = mock.Mock()
+        context._binding.profile = {}
         segment = VLAN_SEGMENTS[0]
         agent = self.AGENTS[0]
         self.driver.try_to_bind_segment_for_agent(context, segment, agent)
-        set({"physical_network": "fake_physical_network"}).issubset(
-            set(context._bound_vif_details.items()))
+        self.assertEqual('{"physical_network": "fake_physical_network"}',
+                         context._binding.profile)

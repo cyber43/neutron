@@ -22,7 +22,8 @@ from eventlet import greenthread
 from neutron.common import exceptions
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import loopingcall
-from neutron.plugins.vmware.vshield.tasks import constants
+from neutron.plugins.vmware.vshield.tasks.constants import TaskState
+from neutron.plugins.vmware.vshield.tasks.constants import TaskStatus
 
 DEFAULT_INTERVAL = 1000
 
@@ -30,7 +31,7 @@ LOG = logging.getLogger(__name__)
 
 
 def nop(task):
-    return constants.TaskStatus.COMPLETED
+    return TaskStatus.COMPLETED
 
 
 class TaskException(exceptions.NeutronException):
@@ -63,12 +64,12 @@ class Task():
         self.status = None
 
         self._monitors = {
-            constants.TaskState.START: [],
-            constants.TaskState.EXECUTED: [],
-            constants.TaskState.RESULT: []
+            TaskState.START: [],
+            TaskState.EXECUTED: [],
+            TaskState.RESULT: []
         }
         self._states = [None, None, None, None]
-        self._state = constants.TaskState.NONE
+        self._state = TaskState.NONE
 
     def _add_monitor(self, action, func):
         self._monitors[action].append(func)
@@ -105,10 +106,10 @@ class Task():
         return self
 
     def _start(self):
-        return self._invoke_monitor(constants.TaskState.START)
+        return self._invoke_monitor(TaskState.START)
 
     def _executed(self):
-        return self._invoke_monitor(constants.TaskState.EXECUTED)
+        return self._invoke_monitor(TaskState.EXECUTED)
 
     def _update_status(self, status):
         if self.status == status:
@@ -117,21 +118,21 @@ class Task():
         self.status = status
 
     def _finished(self):
-        return self._invoke_monitor(constants.TaskState.RESULT)
+        return self._invoke_monitor(TaskState.RESULT)
 
     def add_start_monitor(self, func):
-        return self._add_monitor(constants.TaskState.START, func)
+        return self._add_monitor(TaskState.START, func)
 
     def add_executed_monitor(self, func):
-        return self._add_monitor(constants.TaskState.EXECUTED, func)
+        return self._add_monitor(TaskState.EXECUTED, func)
 
     def add_result_monitor(self, func):
-        return self._add_monitor(constants.TaskState.RESULT, func)
+        return self._add_monitor(TaskState.RESULT, func)
 
     def wait(self, state):
-        if (state < constants.TaskState.START or
-            state > constants.TaskState.RESULT or
-            state == constants.TaskState.STATUS):
+        if (state < TaskState.START or
+            state > TaskState.RESULT or
+            state == TaskState.STATUS):
             raise InvalidState(state=state)
 
         if state <= self._state:
@@ -189,9 +190,9 @@ class TaskManager():
                 'task': str(task),
                 'cb': str(task._execute_callback)}
             LOG.exception(msg)
-            status = constants.TaskStatus.ERROR
+            status = TaskStatus.ERROR
 
-        LOG.debug("Task %(task)s return %(status)s", {
+        LOG.debug(_("Task %(task)s return %(status)s"), {
             'task': str(task),
             'status': status})
 
@@ -210,7 +211,7 @@ class TaskManager():
                 'cb': str(task._result_callback)}
             LOG.exception(msg)
 
-        LOG.debug("Task %(task)s return %(status)s",
+        LOG.debug(_("Task %(task)s return %(status)s"),
                   {'task': str(task), 'status': task.status})
 
         task._finished()
@@ -232,9 +233,9 @@ class TaskManager():
                     'task': str(task),
                     'cb': str(task._status_callback)}
                 LOG.exception(msg)
-                status = constants.TaskStatus.ERROR
+                status = TaskStatus.ERROR
             task._update_status(status)
-            if status != constants.TaskStatus.PENDING:
+            if status != TaskStatus.PENDING:
                 self._dequeue(task, True)
 
     def _enqueue(self, task):
@@ -261,7 +262,7 @@ class TaskManager():
             while tasks:
                 task = tasks[0]
                 status = self._execute(task)
-                if status == constants.TaskStatus.PENDING:
+                if status == TaskStatus.PENDING:
                     break
                 self._dequeue(task, False)
 
@@ -276,7 +277,7 @@ class TaskManager():
         for resource_id in self._tasks.keys():
             tasks = list(self._tasks[resource_id])
             for task in tasks:
-                task._update_status(constants.TaskStatus.ABORT)
+                task._update_status(TaskStatus.ABORT)
                 self._dequeue(task, False)
 
     def _get_task(self):
@@ -313,7 +314,7 @@ class TaskManager():
                         # The thread is killed during _execute(). To guarantee
                         # the task been aborted correctly, put it to the queue.
                         self._enqueue(task)
-                    elif task.status != constants.TaskStatus.PENDING:
+                    elif task.status != TaskStatus.PENDING:
                         self._result(task)
                     else:
                         self._enqueue(task)

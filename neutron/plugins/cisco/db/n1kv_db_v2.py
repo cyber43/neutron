@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cisco Systems, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,11 +13,16 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Aruna Kushwaha, Cisco Systems Inc.
+# @author: Abhishek Raut, Cisco Systems Inc.
+# @author: Rudrajit Tapadar, Cisco Systems Inc.
+# @author: Sergey Sudakovich, Cisco Systems Inc.
 
 import netaddr
 import re
 from sqlalchemy.orm import exc
-from sqlalchemy import sql
+from sqlalchemy.sql import and_
 
 from neutron.api.v2 import attributes
 from neutron.common import constants
@@ -25,7 +32,6 @@ from neutron.db import models_v2
 from neutron.openstack.common import log as logging
 from neutron.plugins.cisco.common import cisco_constants as c_const
 from neutron.plugins.cisco.common import cisco_exceptions as c_exc
-from neutron.plugins.cisco.common import config as c_conf
 from neutron.plugins.cisco.db import n1kv_models_v2
 
 LOG = logging.getLogger(__name__)
@@ -465,13 +471,12 @@ def reserve_vlan(db_session, network_profile):
 
     with db_session.begin(subtransactions=True):
         alloc = (db_session.query(n1kv_models_v2.N1kvVlanAllocation).
-                 filter(sql.and_(
+                 filter(and_(
                         n1kv_models_v2.N1kvVlanAllocation.vlan_id >= seg_min,
                         n1kv_models_v2.N1kvVlanAllocation.vlan_id <= seg_max,
                         n1kv_models_v2.N1kvVlanAllocation.physical_network ==
                         network_profile['physical_network'],
-                        n1kv_models_v2.N1kvVlanAllocation.allocated ==
-                        sql.false())
+                        n1kv_models_v2.N1kvVlanAllocation.allocated == False)
                         )).first()
         if alloc:
             segment_id = alloc.vlan_id
@@ -495,13 +500,12 @@ def reserve_vxlan(db_session, network_profile):
 
     with db_session.begin(subtransactions=True):
         alloc = (db_session.query(n1kv_models_v2.N1kvVxlanAllocation).
-                 filter(sql.and_(
+                 filter(and_(
                         n1kv_models_v2.N1kvVxlanAllocation.vxlan_id >=
                         seg_min,
                         n1kv_models_v2.N1kvVxlanAllocation.vxlan_id <=
                         seg_max,
-                        n1kv_models_v2.N1kvVxlanAllocation.allocated ==
-                        sql.false())
+                        n1kv_models_v2.N1kvVxlanAllocation.allocated == False)
                         ).first())
         if alloc:
             segment_id = alloc.vxlan_id
@@ -559,7 +563,7 @@ def reserve_specific_vlan(db_session, physical_network, vlan_id):
             alloc.allocated = True
             db_session.add(alloc)
         except exc.NoResultFound:
-            raise c_exc.VlanIDOutsidePool()
+            raise c_exc.VlanIDOutsidePool
 
 
 def release_vlan(db_session, physical_network, vlan_id):
@@ -638,7 +642,7 @@ def reserve_specific_vxlan(db_session, vxlan_id):
             alloc.allocated = True
             db_session.add(alloc)
         except exc.NoResultFound:
-            raise c_exc.VxlanIDOutsidePool()
+            raise c_exc.VxlanIDOutsidePool
 
 
 def release_vxlan(db_session, vxlan_id):
@@ -899,9 +903,7 @@ def create_profile_binding(db_session, tenant_id, profile_id, profile_type):
 
 
 def _profile_binding_exists(db_session, tenant_id, profile_id, profile_type):
-    """Check if the profile-tenant binding exists."""
     LOG.debug(_("_profile_binding_exists()"))
-    db_session = db_session or db.get_session()
     return (db_session.query(n1kv_models_v2.ProfileBinding).
             filter_by(tenant_id=tenant_id, profile_id=profile_id,
                       profile_type=profile_type).first())
@@ -930,23 +932,6 @@ def delete_profile_binding(db_session, tenant_id, profile_id):
                     "%(profile_id)s and tenant ID %(tenant_id)s"),
                   {"profile_id": profile_id, "tenant_id": tenant_id})
         return
-
-
-def update_profile_binding(db_session, profile_id, tenants, profile_type):
-    """Updating Profile Binding."""
-    LOG.debug('update_profile_binding()')
-    if profile_type not in ("network", "policy"):
-        raise n_exc.NeutronException(_("Invalid profile type"))
-    db_session = db_session or db.get_session()
-    with db_session.begin(subtransactions=True):
-        db_session.query(n1kv_models_v2.ProfileBinding).filter_by(
-            profile_id=profile_id, profile_type=profile_type).delete()
-        new_tenants_set = set(tenants)
-        for tenant_id in new_tenants_set:
-            tenant = n1kv_models_v2.ProfileBinding(profile_type=profile_type,
-                                                   tenant_id=tenant_id,
-                                                   profile_id=profile_id)
-            db_session.add(tenant)
 
 
 def _get_profile_bindings(db_session, profile_type=None):
@@ -1059,11 +1044,10 @@ class NetworkProfile_db_mixin(object):
                                    context.tenant_id,
                                    net_profile.id,
                                    c_const.NETWORK)
-            if p.get(c_const.ADD_TENANTS):
-                for tenant in p[c_const.ADD_TENANTS]:
-                    self.add_network_profile_tenant(context.session,
-                                                    net_profile.id,
-                                                    tenant)
+            if p.get("add_tenant"):
+                self.add_network_profile_tenant(context.session,
+                                                net_profile.id,
+                                                p["add_tenant"])
         return self._make_network_profile_dict(net_profile)
 
     def delete_network_profile(self, context, id):
@@ -1098,17 +1082,12 @@ class NetworkProfile_db_mixin(object):
         p = network_profile["network_profile"]
         original_net_p = get_network_profile(context.session, id)
         # Update network profile to tenant id binding.
-        if context.is_admin and c_const.ADD_TENANTS in p:
-            if context.tenant_id not in p[c_const.ADD_TENANTS]:
-                p[c_const.ADD_TENANTS].append(context.tenant_id)
-            update_profile_binding(context.session, id,
-                                   p[c_const.ADD_TENANTS], c_const.NETWORK)
+        if context.is_admin and "add_tenant" in p:
+            self.add_network_profile_tenant(context.session, id,
+                                            p["add_tenant"])
             is_updated = True
-        if context.is_admin and c_const.REMOVE_TENANTS in p:
-            for remove_tenant in p[c_const.REMOVE_TENANTS]:
-                if remove_tenant == context.tenant_id:
-                    continue
-                delete_profile_binding(context.session, remove_tenant, id)
+        if context.is_admin and "remove_tenant" in p:
+            delete_profile_binding(context.session, p["remove_tenant"], id)
             is_updated = True
         if original_net_p.segment_type == c_const.NETWORK_TYPE_TRUNK:
             #TODO(abhraut): Remove check when Trunk supports segment range.
@@ -1290,7 +1269,7 @@ class NetworkProfile_db_mixin(object):
 
         :param net_p: network profile object
         """
-        if net_p["segment_type"] == "":
+        if any(net_p[arg] == "" for arg in ["segment_type"]):
             msg = _("Arguments segment_type missing"
                     " for network profile")
             LOG.error(msg)
@@ -1357,18 +1336,18 @@ class NetworkProfile_db_mixin(object):
         if segment_type == c_const.NETWORK_TYPE_VLAN:
             if not ((seg_min <= seg_max) and
                     ((seg_min in range(constants.MIN_VLAN_TAG,
-                                       c_const.N1KV_VLAN_RESERVED_MIN) and
+                                       c_const.NEXUS_VLAN_RESERVED_MIN) and
                       seg_max in range(constants.MIN_VLAN_TAG,
-                                       c_const.N1KV_VLAN_RESERVED_MIN)) or
-                     (seg_min in range(c_const.N1KV_VLAN_RESERVED_MAX + 1,
+                                       c_const.NEXUS_VLAN_RESERVED_MIN)) or
+                     (seg_min in range(c_const.NEXUS_VLAN_RESERVED_MAX + 1,
                                        constants.MAX_VLAN_TAG) and
-                      seg_max in range(c_const.N1KV_VLAN_RESERVED_MAX + 1,
+                      seg_max in range(c_const.NEXUS_VLAN_RESERVED_MAX + 1,
                                        constants.MAX_VLAN_TAG)))):
                 msg = (_("Segment range is invalid, select from "
                          "%(min)s-%(nmin)s, %(nmax)s-%(max)s") %
                        {"min": constants.MIN_VLAN_TAG,
-                        "nmin": c_const.N1KV_VLAN_RESERVED_MIN - 1,
-                        "nmax": c_const.N1KV_VLAN_RESERVED_MAX + 1,
+                        "nmin": c_const.NEXUS_VLAN_RESERVED_MIN - 1,
+                        "nmax": c_const.NEXUS_VLAN_RESERVED_MAX + 1,
                         "max": constants.MAX_VLAN_TAG - 1})
                 LOG.error(msg)
                 raise n_exc.InvalidInput(error_message=msg)
@@ -1380,12 +1359,12 @@ class NetworkProfile_db_mixin(object):
                               c_const.NETWORK_TYPE_MULTI_SEGMENT,
                               c_const.NETWORK_TYPE_TRUNK]:
             if (seg_min > seg_max or
-                seg_min < c_const.N1KV_VXLAN_MIN or
-                seg_max > c_const.N1KV_VXLAN_MAX):
+                seg_min < c_const.NEXUS_VXLAN_MIN or
+                seg_max > c_const.NEXUS_VXLAN_MAX):
                 msg = (_("segment range is invalid. Valid range is : "
                          "%(min)s-%(max)s") %
-                       {"min": c_const.N1KV_VXLAN_MIN,
-                        "max": c_const.N1KV_VXLAN_MAX})
+                       {"min": c_const.NEXUS_VXLAN_MIN,
+                        "max": c_const.NEXUS_VXLAN_MAX})
                 LOG.error(msg)
                 raise n_exc.InvalidInput(error_message=msg)
             profiles = _get_network_profiles(db_session=context.session)
@@ -1490,7 +1469,7 @@ class PolicyProfile_db_mixin(object):
                         profile dictionary. Only these fields will be returned
         :returns: list of all policy profiles
         """
-        if context.is_admin or not c_conf.CISCO_N1K.restrict_policy_profiles:
+        if context.is_admin:
             return self._get_collection(context, n1kv_models_v2.PolicyProfile,
                                         self._make_policy_profile_dict,
                                         filters=filters, fields=fields)
@@ -1607,16 +1586,15 @@ class PolicyProfile_db_mixin(object):
                                  profile_type=c_const.POLICY))
             a_set = set(i.profile_id for i in a_set_q)
             b_set_q = (db_session.query(n1kv_models_v2.ProfileBinding).
-                       filter(sql.and_(n1kv_models_v2.ProfileBinding.
-                                       tenant_id != c_const.TENANT_ID_NOT_SET,
-                                       n1kv_models_v2.ProfileBinding.
-                                       profile_type == c_const.POLICY)))
+                       filter(and_(n1kv_models_v2.ProfileBinding.
+                                   tenant_id != c_const.TENANT_ID_NOT_SET,
+                                   n1kv_models_v2.ProfileBinding.
+                                   profile_type == c_const.POLICY)))
             b_set = set(i.profile_id for i in b_set_q)
             (db_session.query(n1kv_models_v2.ProfileBinding).
-             filter(sql.and_(n1kv_models_v2.ProfileBinding.profile_id.
-                             in_(a_set & b_set),
-                             n1kv_models_v2.ProfileBinding.tenant_id ==
-                             c_const.TENANT_ID_NOT_SET)).
+             filter(and_(n1kv_models_v2.ProfileBinding.profile_id.
+                         in_(a_set & b_set), n1kv_models_v2.ProfileBinding.
+                         tenant_id == c_const.TENANT_ID_NOT_SET)).
              delete(synchronize_session="fetch"))
 
     def _add_policy_profile(self,

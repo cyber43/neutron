@@ -11,6 +11,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Kedar Kulkarni, One Convergence, Inc.
 
 """Implementation of OneConvergence Neutron Plugin."""
 
@@ -19,20 +21,19 @@ from oslo.config import cfg
 from neutron.agent import securitygroups_rpc as sg_rpc
 from neutron.api.rpc.agentnotifiers import dhcp_rpc_agent_api
 from neutron.api.rpc.agentnotifiers import l3_rpc_agent_api
-from neutron.api.rpc.handlers import dhcp_rpc
-from neutron.api.rpc.handlers import l3_rpc
-from neutron.api.rpc.handlers import securitygroups_rpc
 from neutron.common import constants as q_const
 from neutron.common import exceptions as nexception
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron.common import topics
 from neutron.db import agents_db
 from neutron.db import agentschedulers_db
 from neutron.db import db_base_plugin_v2
+from neutron.db import dhcp_rpc_base
 from neutron.db import external_net_db
 from neutron.db import extraroute_db
 from neutron.db import l3_agentschedulers_db
 from neutron.db import l3_gwmode_db
+from neutron.db import l3_rpc_base
 from neutron.db import portbindings_base
 from neutron.db import quota_db  # noqa
 from neutron.db import securitygroups_rpc_base as sg_db_rpc
@@ -40,6 +41,7 @@ from neutron.extensions import portbindings
 from neutron.openstack.common import excutils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import rpc
 from neutron.plugins.common import constants as svc_constants
 import neutron.plugins.oneconvergence.lib.config  # noqa
 import neutron.plugins.oneconvergence.lib.exception as nvsdexception
@@ -50,7 +52,16 @@ LOG = logging.getLogger(__name__)
 IPv6 = 6
 
 
-class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
+class NVSDPluginRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
+                             l3_rpc_base.L3RpcCallbackMixin,
+                             sg_db_rpc.SecurityGroupServerRpcCallbackMixin):
+
+    RPC_API_VERSION = '1.1'
+
+    def create_rpc_dispatcher(self):
+        """Get the rpc dispatcher for this manager."""
+        return q_rpc.PluginRpcDispatcher([self,
+                                          agents_db.AgentExtRpcCallback()])
 
     @staticmethod
     def get_port_from_device(device):
@@ -60,7 +71,7 @@ class SecurityGroupServerRpcMixin(sg_db_rpc.SecurityGroupServerRpcMixin):
         return port
 
 
-class NVSDPluginV2AgentNotifierApi(n_rpc.RpcProxy,
+class NVSDPluginV2AgentNotifierApi(rpc.proxy.RpcProxy,
                                    sg_rpc.SecurityGroupAgentRpcApiMixin):
 
     BASE_RPC_API_VERSION = '1.0'
@@ -73,8 +84,9 @@ class NVSDPluginV2AgentNotifierApi(n_rpc.RpcProxy,
 
     def port_update(self, context, port):
         self.fanout_cast(context,
-                         self.make_msg('port_update', port=port),
-                         topic=self.topic_port_update)
+                         self.make_msg('port_update',
+                                       port=port,
+                                       topic=self.topic_port_update))
 
 
 class OneConvergencePluginV2(db_base_plugin_v2.NeutronDbPluginV2,
@@ -84,7 +96,7 @@ class OneConvergencePluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                              external_net_db.External_net_db_mixin,
                              l3_gwmode_db.L3_NAT_db_mixin,
                              portbindings_base.PortBindingBaseMixin,
-                             SecurityGroupServerRpcMixin):
+                             sg_db_rpc.SecurityGroupServerRpcMixin):
 
     """L2 Virtual Network Plugin.
 
@@ -147,23 +159,21 @@ class OneConvergencePluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         # RPC support
         self.service_topics = {svc_constants.CORE: topics.PLUGIN,
                                svc_constants.L3_ROUTER_NAT: topics.L3PLUGIN}
-        self.conn = n_rpc.create_connection(new=True)
+        self.conn = rpc.create_connection(new=True)
         self.notifier = NVSDPluginV2AgentNotifierApi(topics.AGENT)
         self.agent_notifiers[q_const.AGENT_TYPE_DHCP] = (
             dhcp_rpc_agent_api.DhcpAgentNotifyAPI()
         )
         self.agent_notifiers[q_const.AGENT_TYPE_L3] = (
-            l3_rpc_agent_api.L3AgentNotifyAPI()
+            l3_rpc_agent_api.L3AgentNotify
         )
-        self.endpoints = [securitygroups_rpc.SecurityGroupServerRpcCallback(),
-                          dhcp_rpc.DhcpRpcCallback(),
-                          l3_rpc.L3RpcCallback(),
-                          agents_db.AgentExtRpcCallback()]
+        self.callbacks = NVSDPluginRpcCallbacks()
+        self.dispatcher = self.callbacks.create_rpc_dispatcher()
         for svc_topic in self.service_topics.values():
-            self.conn.create_consumer(svc_topic, self.endpoints, fanout=False)
+            self.conn.create_consumer(svc_topic, self.dispatcher, fanout=False)
 
-        # Consume from all consumers in threads
-        self.conn.consume_in_threads()
+        # Consume from all consumers in a thread
+        self.conn.consume_in_thread()
 
     def create_network(self, context, network):
 
@@ -211,7 +221,6 @@ class OneConvergencePluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             #get all the subnets under the network to delete them
             subnets = self._get_subnets_by_network(context, net_id)
 
-            self._process_l3_delete(context, net_id)
             super(OneConvergencePluginV2, self).delete_network(context,
                                                                net_id)
 

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 Big Switch Networks, Inc.
 # All Rights Reserved.
 #
@@ -12,6 +14,8 @@
 #  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #  License for the specific language governing permissions and limitations
 #  under the License.
+#
+# @author: Sumit Naiksatam, sumitnaiksatam@gmail.com, Big Switch Networks, Inc.
 
 
 import contextlib
@@ -37,16 +41,15 @@ class TestFirewallCallbacks(test_db_firewall.FirewallPluginDbTestCase):
     def setUp(self):
         super(TestFirewallCallbacks,
               self).setUp(fw_plugin=FW_PLUGIN_KLASS)
-        self.callbacks = self.plugin.endpoints[0]
+        self.callbacks = self.plugin.callbacks
 
     def test_set_firewall_status(self):
         ctx = context.get_admin_context()
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ) as fw:
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP) as fw:
                 fw_id = fw['firewall']['id']
                 res = self.callbacks.set_firewall_status(ctx, fw_id,
                                                          const.ACTIVE,
@@ -64,10 +67,9 @@ class TestFirewallCallbacks(test_db_firewall.FirewallPluginDbTestCase):
         ctx = context.get_admin_context()
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ) as fw:
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP) as fw:
                 fw_id = fw['firewall']['id']
                 fw_db = self.plugin._get_firewall(ctx, fw_id)
                 fw_db['status'] = const.PENDING_DELETE
@@ -85,7 +87,7 @@ class TestFirewallCallbacks(test_db_firewall.FirewallPluginDbTestCase):
             fwp_id = fwp['firewall_policy']['id']
             with self.firewall(firewall_policy_id=fwp_id,
                                admin_state_up=test_db_firewall.ADMIN_STATE_UP,
-                               do_delete=False) as fw:
+                               no_delete=True) as fw:
                 fw_id = fw['firewall']['id']
                 with ctx.session.begin(subtransactions=True):
                     fw_db = self.plugin._get_firewall(ctx, fw_id)
@@ -133,10 +135,10 @@ class TestFirewallCallbacks(test_db_firewall.FirewallPluginDbTestCase):
                 res = req.get_response(self.ext_api)
                 attrs = self._get_test_firewall_attrs()
                 attrs['firewall_policy_id'] = fwp_id
-                with self.firewall(
-                        firewall_policy_id=fwp_id,
-                        tenant_id=tenant_id,
-                        admin_state_up=test_db_firewall.ADMIN_STATE_UP) as fw:
+                with self.firewall(firewall_policy_id=fwp_id,
+                                   tenant_id=tenant_id,
+                                   admin_state_up=
+                                   test_db_firewall.ADMIN_STATE_UP) as fw:
                     fw_id = fw['firewall']['id']
                     res = self.callbacks.get_firewalls_for_tenant(ctx,
                                                                   host='dummy')
@@ -184,7 +186,8 @@ class TestFirewallAgentApi(base.BaseTestCase):
         self.assertEqual(rv, self.mock_fanoutcast.return_value)
         self.mock_fanoutcast.assert_called_once_with(
             mock.sentinel.context,
-            self.mock_msg.return_value
+            self.mock_msg.return_value,
+            topic='topic'
         )
 
         self.mock_msg.assert_called_once_with(
@@ -207,7 +210,7 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
 
     def setUp(self):
         super(TestFirewallPluginBase, self).setUp(fw_plugin=FW_PLUGIN_KLASS)
-        self.callbacks = self.plugin.endpoints[0]
+        self.callbacks = self.plugin.callbacks
 
     def test_create_second_firewall_not_permitted(self):
         with self.firewall():
@@ -231,10 +234,9 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
             attrs['firewall_policy_id'] = fwp_id
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ) as firewall:
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP) as firewall:
                 fw_id = firewall['firewall']['id']
                 res = self.callbacks.set_firewall_status(ctx, fw_id,
                                                          const.ACTIVE)
@@ -255,34 +257,14 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
             attrs['firewall_policy_id'] = fwp_id
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ) as firewall:
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP) as firewall:
                 fw_id = firewall['firewall']['id']
                 data = {'firewall': {'name': name}}
                 req = self.new_update_request('firewalls', data, fw_id)
                 res = req.get_response(self.ext_api)
                 self.assertEqual(res.status_int, exc.HTTPConflict.code)
-
-    def test_update_firewall_shared_fails_for_non_admin(self):
-        ctx = context.get_admin_context()
-        with self.firewall_policy() as fwp:
-            fwp_id = fwp['firewall_policy']['id']
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP,
-                tenant_id='noadmin'
-            ) as firewall:
-                fw_id = firewall['firewall']['id']
-                self.callbacks.set_firewall_status(ctx, fw_id,
-                                                   const.ACTIVE)
-                data = {'firewall': {'shared': True}}
-                req = self.new_update_request(
-                    'firewalls', data, fw_id,
-                    context=context.Context('', 'noadmin'))
-                res = req.get_response(self.ext_api)
-                self.assertEqual(res.status_int, exc.HTTPForbidden.code)
 
     def test_update_firewall_policy_fails_when_firewall_pending(self):
         name = "new_firewall1"
@@ -291,10 +273,9 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
             attrs['firewall_policy_id'] = fwp_id
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ):
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP):
                 data = {'firewall_policy': {'name': name}}
                 req = self.new_update_request('firewall_policies',
                                               data, fwp_id)
@@ -312,10 +293,9 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
                 req = self.new_update_request('firewall_policies', data,
                                               fwp_id)
                 req.get_response(self.ext_api)
-                with self.firewall(
-                    firewall_policy_id=fwp_id,
-                    admin_state_up=test_db_firewall.ADMIN_STATE_UP
-                ):
+                with self.firewall(firewall_policy_id=fwp_id,
+                                   admin_state_up=
+                                   test_db_firewall.ADMIN_STATE_UP):
                     data = {'firewall_rule': {'protocol': 'udp'}}
                     req = self.new_update_request('firewall_rules',
                                                   data, fr_id)
@@ -330,10 +310,9 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
             attrs['firewall_policy_id'] = fwp_id
-            with self.firewall(
-                firewall_policy_id=fwp_id,
-                admin_state_up=test_db_firewall.ADMIN_STATE_UP
-            ) as firewall:
+            with self.firewall(firewall_policy_id=fwp_id,
+                               admin_state_up=
+                               test_db_firewall.ADMIN_STATE_UP) as firewall:
                 fw_id = firewall['firewall']['id']
                 attrs = self._replace_firewall_status(attrs,
                                                       const.PENDING_CREATE,
@@ -344,14 +323,14 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
                 for k, v in attrs.iteritems():
                     self.assertEqual(fw_db[k], v)
             # cleanup the pending firewall
-            self.plugin.endpoints[0].firewall_deleted(ctx, fw_id)
+            self.plugin.callbacks.firewall_deleted(ctx, fw_id)
 
     def test_delete_firewall_after_agent_delete(self):
         ctx = context.get_admin_context()
         with self.firewall_policy() as fwp:
             fwp_id = fwp['firewall_policy']['id']
             with self.firewall(firewall_policy_id=fwp_id,
-                               do_delete=False) as fw:
+                               no_delete=True) as fw:
                 fw_id = fw['firewall']['id']
                 req = self.new_delete_request('firewalls', fw_id)
                 res = req.get_response(self.ext_api)
@@ -375,10 +354,9 @@ class TestFirewallPluginBase(test_db_firewall.TestFirewallDBPlugin):
                 req.get_response(self.ext_api)
                 attrs = self._get_test_firewall_attrs()
                 attrs['firewall_policy_id'] = fwp_id
-                with self.firewall(
-                    firewall_policy_id=fwp_id,
-                    admin_state_up=test_db_firewall.ADMIN_STATE_UP
-                ) as fw:
+                with self.firewall(firewall_policy_id=fwp_id,
+                                   admin_state_up=
+                                   test_db_firewall.ADMIN_STATE_UP) as fw:
                     fw_id = fw['firewall']['id']
                     fw_rules = (
                         self.plugin._make_firewall_dict_with_rules(ctx,

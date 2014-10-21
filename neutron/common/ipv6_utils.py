@@ -16,15 +16,10 @@
 """
 IPv6-related utilities and helper functions.
 """
-import os
 
 import netaddr
 
-from neutron.openstack.common.gettextutils import _LI
-from neutron.openstack.common import log
 
-
-LOG = log.getLogger(__name__)
 _IS_IPV6_ENABLED = None
 
 
@@ -52,12 +47,7 @@ def is_enabled():
 
     if _IS_IPV6_ENABLED is None:
         disabled_ipv6_path = "/proc/sys/net/ipv6/conf/default/disable_ipv6"
-        if os.path.exists(disabled_ipv6_path):
-            with open(disabled_ipv6_path, 'r') as f:
-                disabled = f.read().strip()
-            _IS_IPV6_ENABLED = disabled == "0"
-        else:
-            _IS_IPV6_ENABLED = False
-        if not _IS_IPV6_ENABLED:
-            LOG.info(_LI("IPv6 is not enabled on this system."))
+        with open(disabled_ipv6_path, 'r') as f:
+            disabled = f.read().strip()
+        _IS_IPV6_ENABLED = disabled == "0"
     return _IS_IPV6_ENABLED

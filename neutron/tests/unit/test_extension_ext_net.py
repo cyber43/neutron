@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2013 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -16,14 +18,13 @@
 import contextlib
 import itertools
 
-import mock
 import testtools
 from webob import exc
 
 from neutron import context
 from neutron.db import models_v2
 from neutron.extensions import external_net as external_net
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import uuidutils
 from neutron.tests.unit import test_api_v2
@@ -103,32 +104,20 @@ class ExtNetDBTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                     query_params='router:external=False')
 
     def test_get_network_succeeds_without_filter(self):
-        plugin = manager.NeutronManager.get_plugin()
+        plugin = NeutronManager.get_plugin()
         ctx = context.Context(None, None, is_admin=True)
         result = plugin.get_networks(ctx, filters=None)
         self.assertEqual(result, [])
 
-    def test_update_network_set_external_non_admin_fails(self):
-        # Assert that a non-admin user cannot update the
-        # router:external attribute
-        with self.network(tenant_id='noadmin') as network:
-            data = {'network': {'router:external': True}}
-            req = self.new_update_request('networks',
-                                          data,
-                                          network['network']['id'])
-            req.environ['neutron.context'] = context.Context('', 'noadmin')
-            res = req.get_response(self.api)
-            self.assertEqual(exc.HTTPForbidden.code, res.status_int)
-
     def test_network_filter_hook_admin_context(self):
-        plugin = manager.NeutronManager.get_plugin()
+        plugin = NeutronManager.get_plugin()
         ctx = context.Context(None, None, is_admin=True)
         model = models_v2.Network
         conditions = plugin._network_filter_hook(ctx, model, [])
         self.assertEqual(conditions, [])
 
     def test_network_filter_hook_nonadmin_context(self):
-        plugin = manager.NeutronManager.get_plugin()
+        plugin = NeutronManager.get_plugin()
         ctx = context.Context('edinson', 'cavani')
         model = models_v2.Network
         txt = "externalnetworks.network_id IS NOT NULL"
@@ -149,7 +138,7 @@ class ExtNetDBTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                         pass
                     self.assertEqual(ctx_manager.exception.code, 403)
 
-    def test_create_port_external_network_admin_succeeds(self):
+    def test_create_port_external_network_admin_suceeds(self):
         with self.network(router__external=True) as ext_net:
             with self.subnet(network=ext_net) as ext_subnet:
                 with self.port(subnet=ext_subnet) as port:
@@ -164,22 +153,10 @@ class ExtNetDBTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                 pass
             self.assertEqual(ctx_manager.exception.code, 403)
 
-    def test_create_external_network_admin_succeeds(self):
+    def test_create_external_network_admin_suceeds(self):
         with self.network(router__external=True) as ext_net:
             self.assertEqual(ext_net['network'][external_net.EXTERNAL],
                              True)
-
-    def test_delete_network_check_disassociated_floatingips(self):
-        with mock.patch.object(manager.NeutronManager,
-                               'get_service_plugins') as srv_plugins:
-            l3_mock = mock.Mock()
-            srv_plugins.return_value = {'L3_ROUTER_NAT': l3_mock}
-            with self.network() as net:
-                req = self.new_delete_request('networks', net['network']['id'])
-                res = req.get_response(self.api)
-                self.assertEqual(res.status_int, exc.HTTPNoContent.code)
-                (l3_mock.delete_disassociated_floatingips
-                 .assert_called_once_with(mock.ANY, net['network']['id']))
 
 
 class ExtNetDBTestCaseXML(ExtNetDBTestCase):

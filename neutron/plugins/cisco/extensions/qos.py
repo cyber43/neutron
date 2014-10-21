@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2011 Cisco Systems, Inc.
 # All rights reserved.
 #
@@ -12,12 +14,15 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Ying Liu, Cisco Systems, Inc.
+#
 
 from webob import exc
 
 from neutron.api import api_common as common
 from neutron.api import extensions
-from neutron import manager
+from neutron.manager import NeutronManager
 from neutron.plugins.cisco.common import cisco_exceptions as exception
 from neutron.plugins.cisco.common import cisco_faults as faults
 from neutron.plugins.cisco.extensions import _qos_view as qos_view
@@ -58,7 +63,7 @@ class Qos(extensions.ExtensionDescriptor):
         parent_resource = dict(member_name="tenant",
                                collection_name="extensions/csco/tenants")
 
-        controller = QosController(manager.NeutronManager.get_plugin())
+        controller = QosController(NeutronManager.get_plugin())
         return [extensions.ResourceExtension('qoss', controller,
                                              parent=parent_resource)]
 
@@ -94,7 +99,7 @@ class QosController(common.NeutronController, wsgi.Controller):
         result = [builder.build(qos, is_detail)['qos'] for qos in qoss]
         return dict(qoss=result)
 
-    # pylint: disable=no-member
+    # pylint: disable-msg=E1101
     def show(self, request, tenant_id, id):
         """Returns qos details for the given qos id."""
         try:

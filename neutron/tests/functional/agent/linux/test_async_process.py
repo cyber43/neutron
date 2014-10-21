@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,7 +17,7 @@
 import eventlet
 import fixtures
 
-from six import moves
+from six.moves import xrange
 
 from neutron.agent.linux import async_process
 from neutron.tests import base
@@ -27,7 +29,7 @@ class TestAsyncProcess(base.BaseTestCase):
         super(TestAsyncProcess, self).setUp()
         self.test_file_path = self.useFixture(
             fixtures.TempDir()).join("test_async_process.tmp")
-        self.data = [str(x) for x in moves.xrange(4)]
+        self.data = [str(x) for x in xrange(4)]
         with file(self.test_file_path, 'w') as f:
             f.writelines('%s\n' % item for item in self.data)
 

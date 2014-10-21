@@ -12,6 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Claudiu Belu, Cloudbase Solutions Srl
 
 from neutron.agent import firewall
 from neutron.openstack.common import log as logging
@@ -88,10 +89,10 @@ class HyperVSecurityGroupsDriver(firewall.FirewallDriver):
         }
 
     def apply_port_filter(self, port):
-        LOG.info(_('Aplying port filter.'))
+        LOG.info('Aplying port filter.')
 
     def update_port_filter(self, port):
-        LOG.info(_('Updating port rules.'))
+        LOG.info('Updating port rules.')
 
         if port['device'] not in self._security_ports:
             self.prepare_port_filter(port)
@@ -104,10 +105,8 @@ class HyperVSecurityGroupsDriver(firewall.FirewallDriver):
         new_rules = [r for r in param_port_rules if r not in rules]
         remove_rules = [r for r in rules if r not in param_port_rules]
 
-        LOG.info(_("Creating %(new)s new rules, removing %(old)s "
-                   "old rules."),
-                 {'new': len(new_rules),
-                  'old': len(remove_rules)})
+        LOG.info("Creating %s new rules, removing %s old rules." % (
+                 len(new_rules), len(remove_rules)))
 
         self._remove_port_rules(old_port['id'], remove_rules)
         self._create_port_rules(port['id'], new_rules)
@@ -115,7 +114,7 @@ class HyperVSecurityGroupsDriver(firewall.FirewallDriver):
         self._security_ports[port['device']] = port
 
     def remove_port_filter(self, port):
-        LOG.info(_('Removing port filter'))
+        LOG.info('Removing port filter')
         self._security_ports.pop(port['device'], None)
 
     @property

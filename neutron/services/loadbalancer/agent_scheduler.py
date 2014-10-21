@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (c) 2013 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -37,8 +39,7 @@ class PoolLoadbalancerAgentBinding(model_base.BASEV2):
                         primary_key=True)
     agent = orm.relation(agents_db.Agent)
     agent_id = sa.Column(sa.String(36), sa.ForeignKey("agents.id",
-                                                      ondelete='CASCADE'),
-                         nullable=False)
+                                                      ondelete='CASCADE'))
 
 
 class LbaasAgentSchedulerDbMixin(agentschedulers_db.AgentSchedulerDbMixin,

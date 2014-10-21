@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 #    (c) Copyright 2013 Hewlett-Packard Development Company, L.P.
 #    All Rights Reserved.
 #
@@ -12,6 +14,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Swaminathan Vasudevan, Hewlett-Packard.
 
 import abc
 
@@ -22,7 +26,7 @@ from neutron.api.v2 import attributes as attr
 from neutron.api.v2 import resource_helper
 from neutron.common import exceptions as qexception
 from neutron.plugins.common import constants
-from neutron.services import service_base
+from neutron.services.service_base import ServicePluginBase
 
 
 class VPNServiceNotFound(qexception.NotFound):
@@ -30,7 +34,7 @@ class VPNServiceNotFound(qexception.NotFound):
 
 
 class IPsecSiteConnectionNotFound(qexception.NotFound):
-    message = _("ipsec_site_connection %(ipsec_site_conn_id)s not found")
+    message = _("ipsec_site_connection %(ipsecsite_conn_id)s not found")
 
 
 class IPsecSiteConnectionDpdIntervalValueError(qexception.InvalidInput):
@@ -52,8 +56,7 @@ class IPsecPolicyNotFound(qexception.NotFound):
 
 
 class IKEPolicyInUse(qexception.InUse):
-    message = _("IKEPolicy %(ikepolicy_id)s is in use by existing "
-                "IPsecSiteConnection and can't be updated or deleted")
+    message = _("IKEPolicy %(ikepolicy_id)s is still in use")
 
 
 class VPNServiceInUse(qexception.InUse):
@@ -70,8 +73,7 @@ class VPNStateInvalidToUpdate(qexception.BadRequest):
 
 
 class IPsecPolicyInUse(qexception.InUse):
-    message = _("IPsecPolicy %(ipsecpolicy_id)s is in use by existing "
-                "IPsecSiteConnection and can't be updated or deleted")
+    message = _("IPsecPolicy %(ipsecpolicy_id)s is still in use")
 
 
 class DeviceDriverImportError(qexception.NeutronException):
@@ -386,7 +388,7 @@ class Vpnaas(extensions.ExtensionDescriptor):
 
 
 @six.add_metaclass(abc.ABCMeta)
-class VPNPluginBase(service_base.ServicePluginBase):
+class VPNPluginBase(ServicePluginBase):
 
     def get_plugin_name(self):
         return constants.VPN

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc.
 # All Rights Reserved
 #
@@ -14,7 +16,7 @@
 #    under the License.
 #
 
-import abc
+from abc import abstractmethod
 
 from neutron.api import extensions
 from neutron.api.v2 import attributes as attr
@@ -75,7 +77,7 @@ def convert_to_unsigned_int_or_none(val):
     try:
         val = int(val)
         if val < 0:
-            raise ValueError()
+            raise ValueError
     except (ValueError, TypeError):
         msg = _("'%s' must be a non negative integer.") % val
         raise qexception.InvalidInput(error_message=msg)
@@ -211,19 +213,19 @@ class Qos(object):
 
 
 class QueuePluginBase(object):
-    @abc.abstractmethod
+    @abstractmethod
     def create_qos_queue(self, context, queue):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def delete_qos_queue(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_qos_queue(self, context, id, fields=None):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_qos_queues(self, context, filters=None, fields=None, sorts=None,
                        limit=None, marker=None, page_reverse=False):
         pass

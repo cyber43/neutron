@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2012, Nachi Ueno, NTT MCL, Inc.
 # All Rights Reserved.
 #
@@ -14,25 +16,19 @@
 #    under the License.
 #
 
-import functools
-
 from oslo.config import cfg
-from oslo import messaging
 
-from neutron.agent import firewall
 from neutron.common import topics
-from neutron.openstack.common.gettextutils import _LI, _LW
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
-# history
-#   1.1 Support Security Group RPC
 SG_RPC_VERSION = "1.1"
 
 security_group_opts = [
     cfg.StrOpt(
         'firewall_driver',
+        default=None,
         help=_('Driver for security groups firewall in the L2 agent')),
     cfg.BoolOpt(
         'enable_security_group',
@@ -40,11 +36,7 @@ security_group_opts = [
         help=_(
             'Controls whether the neutron security group API is enabled '
             'in the server. It should be false when using no security '
-            'groups or using the nova security group API.')),
-    cfg.BoolOpt(
-        'enable_ipset',
-        default=True,
-        help=_('Use ipset to speed-up the iptables based security groups.'))
+            'groups or using the nova security group API.'))
 ]
 cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
 
@@ -64,8 +56,7 @@ def _is_valid_driver_combination():
 
 def is_firewall_enabled():
     if not _is_valid_driver_combination():
-        LOG.warn(_("Driver configuration doesn't match with "
-                   "enable_security_group"))
+        LOG.warn("Driver configuration don't match with enable_security_group")
 
     return cfg.CONF.SECURITYGROUP.enable_security_group
 
@@ -77,30 +68,22 @@ def _disable_extension(extension, aliases):
 
 def disable_security_group_extension_by_config(aliases):
     if not is_firewall_enabled():
-        LOG.info(_LI('Disabled security-group extension.'))
+        LOG.info(_('Disabled security-group extension.'))
         _disable_extension('security-group', aliases)
-        LOG.info(_LI('Disabled allowed-address-pairs extension.'))
+        LOG.info(_('Disabled allowed-address-pairs extension.'))
         _disable_extension('allowed-address-pairs', aliases)
 
 
 class SecurityGroupServerRpcApiMixin(object):
     """A mix-in that enable SecurityGroup support in plugin rpc."""
-
     def security_group_rules_for_devices(self, context, devices):
         LOG.debug(_("Get security group rules "
                     "for devices via rpc %r"), devices)
         return self.call(context,
                          self.make_msg('security_group_rules_for_devices',
                                        devices=devices),
-                         version='1.1')
-
-    def security_group_info_for_devices(self, context, devices):
-        LOG.debug("Get security group information for devices via rpc %r",
-                  devices)
-        return self.call(context,
-                         self.make_msg('security_group_info_for_devices',
-                                       devices=devices),
-                         version='1.2')
+                         version=SG_RPC_VERSION,
+                         topic=self.topic)
 
 
 class SecurityGroupAgentRpcCallbackMixin(object):
@@ -156,8 +139,8 @@ class SecurityGroupAgentRpcMixin(object):
         firewall_driver = cfg.CONF.SECURITYGROUP.firewall_driver
         LOG.debug(_("Init firewall settings (driver=%s)"), firewall_driver)
         if not _is_valid_driver_combination():
-            LOG.warn(_("Driver configuration doesn't match "
-                       "with enable_security_group"))
+            LOG.warn("Driver configuration doesn't match "
+                     "with enable_security_group")
         if not firewall_driver:
             firewall_driver = 'neutron.agent.firewall.NoopFirewallDriver'
         self.firewall = importutils.import_object(firewall_driver)
@@ -169,82 +152,27 @@ class SecurityGroupAgentRpcMixin(object):
         self.devices_to_refilter = set()
         # Flag raised when a global refresh is needed
         self.global_refresh_firewall = False
-        self._use_enhanced_rpc = None
 
-    @property
-    def use_enhanced_rpc(self):
-        if self._use_enhanced_rpc is None:
-            self._use_enhanced_rpc = (
-                self._check_enhanced_rpc_is_supported_by_server())
-        return self._use_enhanced_rpc
-
-    def _check_enhanced_rpc_is_supported_by_server(self):
-        try:
-            self.plugin_rpc.security_group_info_for_devices(
-                self.context, devices=[])
-        except messaging.UnsupportedVersion:
-            LOG.warning(_LW('security_group_info_for_devices rpc call not '
-                            'supported by the server, falling back to old '
-                            'security_group_rules_for_devices which scales '
-                            'worse.'))
-            return False
-        return True
-
-    def skip_if_noopfirewall_or_firewall_disabled(func):
-        @functools.wraps(func)
-        def decorated_function(self, *args, **kwargs):
-            if (isinstance(self.firewall, firewall.NoopFirewallDriver) or
-                not is_firewall_enabled()):
-                LOG.info(_LI("Skipping method %s as firewall is disabled "
-                         "or configured as NoopFirewallDriver."),
-                         func.__name__)
-            else:
-                return func(self, *args, **kwargs)
-        return decorated_function
-
-    @skip_if_noopfirewall_or_firewall_disabled
     def prepare_devices_filter(self, device_ids):
         if not device_ids:
             return
-        LOG.info(_LI("Preparing filters for devices %s"), device_ids)
-        if self.use_enhanced_rpc:
-            devices_info = self.plugin_rpc.security_group_info_for_devices(
-                self.context, list(device_ids))
-            devices = devices_info['devices']
-            security_groups = devices_info['security_groups']
-            security_group_member_ips = devices_info['sg_member_ips']
-        else:
-            devices = self.plugin_rpc.security_group_rules_for_devices(
-                self.context, list(device_ids))
-
+        LOG.info(_("Preparing filters for devices %s"), device_ids)
+        devices = self.plugin_rpc.security_group_rules_for_devices(
+            self.context, list(device_ids))
         with self.firewall.defer_apply():
             for device in devices.values():
                 self.firewall.prepare_port_filter(device)
-            if self.use_enhanced_rpc:
-                LOG.debug("Update security group information for ports %s",
-                          devices.keys())
-                self._update_security_group_info(
-                    security_groups, security_group_member_ips)
-
-    def _update_security_group_info(self, security_groups,
-                                    security_group_member_ips):
-        LOG.debug("Update security group information")
-        for sg_id, sg_rules in security_groups.items():
-            self.firewall.update_security_group_rules(sg_id, sg_rules)
-        for remote_sg_id, member_ips in security_group_member_ips.items():
-            self.firewall.update_security_group_members(
-                remote_sg_id, member_ips)
 
     def security_groups_rule_updated(self, security_groups):
-        LOG.info(_LI("Security group "
-                 "rule updated %r"), security_groups)
+        LOG.info(_("Security group "
+                   "rule updated %r"), security_groups)
         self._security_group_updated(
             security_groups,
             'security_groups')
 
     def security_groups_member_updated(self, security_groups):
-        LOG.info(_LI("Security group "
-                 "member updated %r"), security_groups)
+        LOG.info(_("Security group "
+                   "member updated %r"), security_groups)
         self._security_group_updated(
             security_groups,
             'security_group_source_groups')
@@ -265,7 +193,7 @@ class SecurityGroupAgentRpcMixin(object):
                 self.refresh_firewall(devices)
 
     def security_groups_provider_updated(self):
-        LOG.info(_LI("Provider rule updated"))
+        LOG.info(_("Provider rule updated"))
         if self.defer_refresh_firewall:
             # NOTE(salv-orlando): A 'global refresh' might not be
             # necessary if the subnet for which the provider rules
@@ -277,7 +205,7 @@ class SecurityGroupAgentRpcMixin(object):
     def remove_devices_filter(self, device_ids):
         if not device_ids:
             return
-        LOG.info(_LI("Remove device filter for %r"), device_ids)
+        LOG.info(_("Remove device filter for %r"), device_ids)
         with self.firewall.defer_apply():
             for device_id in device_ids:
                 device = self.firewall.ports.get(device_id)
@@ -285,33 +213,19 @@ class SecurityGroupAgentRpcMixin(object):
                     continue
                 self.firewall.remove_port_filter(device)
 
-    @skip_if_noopfirewall_or_firewall_disabled
     def refresh_firewall(self, device_ids=None):
-        LOG.info(_LI("Refresh firewall rules"))
+        LOG.info(_("Refresh firewall rules"))
         if not device_ids:
             device_ids = self.firewall.ports.keys()
             if not device_ids:
-                LOG.info(_LI("No ports here to refresh firewall"))
+                LOG.info(_("No ports here to refresh firewall"))
                 return
-        if self.use_enhanced_rpc:
-            devices_info = self.plugin_rpc.security_group_info_for_devices(
-                self.context, device_ids)
-            devices = devices_info['devices']
-            security_groups = devices_info['security_groups']
-            security_group_member_ips = devices_info['sg_member_ips']
-        else:
-            devices = self.plugin_rpc.security_group_rules_for_devices(
-                self.context, device_ids)
-
+        devices = self.plugin_rpc.security_group_rules_for_devices(
+            self.context, device_ids)
         with self.firewall.defer_apply():
             for device in devices.values():
                 LOG.debug(_("Update port filter for %s"), device['device'])
                 self.firewall.update_port_filter(device)
-            if self.use_enhanced_rpc:
-                LOG.debug("Update security group information for ports %s",
-                          devices.keys())
-                self._update_security_group_info(
-                    security_groups, security_group_member_ips)
 
     def firewall_refresh_needed(self):
         return self.global_refresh_firewall or self.devices_to_refilter
@@ -324,7 +238,7 @@ class SecurityGroupAgentRpcMixin(object):
         security group membership or rules.
 
         :param new_devices: set containing identifiers for new devices
-        :param updated_devices: set containing identifiers for
+        :param updated_devices: set containining identifiers for
         updated devices
         """
         if new_devices:

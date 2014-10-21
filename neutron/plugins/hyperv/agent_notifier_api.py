@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cloudbase Solutions SRL
 # All Rights Reserved.
 #
@@ -12,16 +14,17 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+# @author: Alessandro Pilotti, Cloudbase Solutions Srl
 
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron.openstack.common import log as logging
+from neutron.openstack.common.rpc import proxy
 from neutron.plugins.hyperv.common import constants
 
 LOG = logging.getLogger(__name__)
 
 
-class AgentNotifierApi(n_rpc.RpcProxy):
+class AgentNotifierApi(proxy.RpcProxy):
     '''Agent side of the openvswitch rpc API.
 
     API version history:

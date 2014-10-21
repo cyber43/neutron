@@ -11,11 +11,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
+#
+# @author: Kedar Kulkarni, One Convergence, Inc.
 import mock
 import requests
 
-from neutron.openstack.common import jsonutils
+from neutron.openstack.common import jsonutils as json
 from neutron.plugins.oneconvergence.lib import config  # noqa
 from neutron.plugins.oneconvergence.lib import plugin_helper as client
 from neutron.tests import base
@@ -29,30 +30,30 @@ class TestPluginHelper(base.BaseTestCase):
     def get_response(self, *args, **kwargs):
         response = mock.Mock()
         response.status_code = requests.codes.ok
-        response.content = jsonutils.dumps({'session_uuid': 'new_auth_token'})
+        response.content = json.dumps({'session_uuid': 'new_auth_token'})
         return response
 
     def test_login(self):
         login_url = ('http://127.0.0.1:8082/pluginhandler/ocplugin/'
                      'authmgmt/login')
         headers = {'Content-Type': 'application/json'}
-        data = jsonutils.dumps({"user_name": "ocplugin", "passwd": "oc123"})
+        data = json.dumps({"user_name": "ocplugin", "passwd": "oc123"})
         timeout = 30.0
 
-        with mock.patch.object(self.nvsdcontroller.pool, 'request',
-                               side_effect=self.get_response) as request:
+        with mock.patch.object(self.nvsdcontroller, 'do_request',
+                               side_effect=self.get_response) as do_request:
             self.nvsdcontroller.login()
-            request.assert_called_once_with('POST', url=login_url,
-                                            headers=headers, data=data,
-                                            timeout=timeout)
+            do_request.assert_called_once_with('POST', url=login_url,
+                                               headers=headers, data=data,
+                                               timeout=timeout)
 
     def test_request(self):
-        with mock.patch.object(self.nvsdcontroller.pool, 'request',
-                               side_effect=self.get_response) as request:
+        with mock.patch.object(self.nvsdcontroller, 'do_request',
+                               side_effect=self.get_response) as do_request:
             self.nvsdcontroller.login()
             self.nvsdcontroller.request("POST", "/some_url")
-            self.assertEqual(request.call_count, 2)
-            request.assert_called_with(
+            self.assertEqual(do_request.call_count, 2)
+            do_request.assert_called_with(
                 'POST',
                 url='http://127.0.0.1:8082/some_url?authToken=new_auth_token',
                 headers={'Content-Type': 'application/json'}, data='',

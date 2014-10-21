@@ -14,12 +14,10 @@
 # limitations under the License.
 
 import contextlib
-import uuid
 
 import mock
 import netaddr
 from oslo.config import cfg
-from oslo.db import exception as db_exc
 from sqlalchemy import exc as sql_exc
 import webob.exc
 
@@ -28,7 +26,6 @@ from neutron.common import constants
 from neutron.common import exceptions as ntn_exc
 import neutron.common.test_lib as test_lib
 from neutron import context
-from neutron.extensions import dvr
 from neutron.extensions import external_net
 from neutron.extensions import l3
 from neutron.extensions import l3_ext_gw_mode
@@ -36,23 +33,30 @@ from neutron.extensions import portbindings
 from neutron.extensions import providernet as pnet
 from neutron.extensions import securitygroup as secgrp
 from neutron import manager
+from neutron.manager import NeutronManager
+from neutron.openstack.common.db import exception as db_exc
 from neutron.openstack.common import log
 from neutron.openstack.common import uuidutils
 from neutron.plugins.vmware.api_client import exception as api_exc
-from neutron.plugins.vmware.api_client import version as version_module
+from neutron.plugins.vmware.api_client.version import Version
 from neutron.plugins.vmware.common import exceptions as nsx_exc
 from neutron.plugins.vmware.common import sync
-from neutron.plugins.vmware.common import utils
 from neutron.plugins.vmware.dbexts import db as nsx_db
+from neutron.plugins.vmware.extensions import distributedrouter as dist_router
 from neutron.plugins.vmware import nsxlib
+from neutron.plugins.vmware.plugins.base import NetworkTypes
 from neutron.tests.unit import _test_extension_portbindings as test_bindings
 import neutron.tests.unit.test_db_plugin as test_plugin
 import neutron.tests.unit.test_extension_ext_gw_mode as test_ext_gw_mode
 import neutron.tests.unit.test_extension_security_group as ext_sg
 import neutron.tests.unit.test_l3_plugin as test_l3_plugin
 from neutron.tests.unit import testlib_api
-from neutron.tests.unit import vmware
 from neutron.tests.unit.vmware.apiclient import fake
+from neutron.tests.unit.vmware import get_fake_conf
+from neutron.tests.unit.vmware import NSXAPI_NAME
+from neutron.tests.unit.vmware import NSXEXT_PATH
+from neutron.tests.unit.vmware import PLUGIN_NAME
+from neutron.tests.unit.vmware import STUBS_PATH
 
 LOG = log.getLogger(__name__)
 
@@ -87,14 +91,13 @@ class NsxPluginV2TestCase(test_plugin.NeutronDbPluginV2TestCase):
         return network_req.get_response(self.api)
 
     def setUp(self,
-              plugin=vmware.PLUGIN_NAME,
+              plugin=PLUGIN_NAME,
               ext_mgr=None,
               service_plugins=None):
-        test_lib.test_config['config_files'] = [
-            vmware.get_fake_conf('nsx.ini.test')]
+        test_lib.test_config['config_files'] = [get_fake_conf('nsx.ini.test')]
         # mock api client
-        self.fc = fake.FakeClient(vmware.STUBS_PATH)
-        self.mock_nsx = mock.patch(vmware.NSXAPI_NAME, autospec=True)
+        self.fc = fake.FakeClient(STUBS_PATH)
+        self.mock_nsx = mock.patch(NSXAPI_NAME, autospec=True)
         self.mock_instance = self.mock_nsx.start()
         # Avoid runs of the synchronizer looping call
         patch_sync = mock.patch.object(sync, '_start_loopingcall')
@@ -102,7 +105,7 @@ class NsxPluginV2TestCase(test_plugin.NeutronDbPluginV2TestCase):
 
         # Emulate tests against NSX 2.x
         self.mock_instance.return_value.get_version.return_value = (
-            version_module.Version("2.9"))
+            Version("2.9"))
         self.mock_instance.return_value.request.side_effect = (
             self.fc.fake_request)
         super(NsxPluginV2TestCase, self).setUp(plugin=plugin,
@@ -124,8 +127,7 @@ class TestV2HTTPResponse(test_plugin.TestV2HTTPResponse, NsxPluginV2TestCase):
 class TestPortsV2(NsxPluginV2TestCase,
                   test_plugin.TestPortsV2,
                   test_bindings.PortBindingsTestCase,
-                  test_bindings.PortBindingsHostTestCaseMixin,
-                  test_bindings.PortBindingsVnicTestCaseMixin):
+                  test_bindings.PortBindingsHostTestCaseMixin):
 
     VIF_TYPE = portbindings.VIF_TYPE_OVS
     HAS_PORT_FILTER = True
@@ -223,7 +225,7 @@ class TestPortsV2(NsxPluginV2TestCase,
 
     def test_create_port_maintenance_returns_503(self):
         with self.network() as net:
-            with mock.patch.object(nsxlib, 'do_request',
+            with mock.patch.object(nsxlib.switch, 'do_request',
                                    side_effect=nsx_exc.MaintenanceInProgress):
                 data = {'port': {'network_id': net['network']['id'],
                                  'admin_state_up': False,
@@ -324,7 +326,7 @@ class TestNetworksV2(test_plugin.TestNetworksV2, NsxPluginV2TestCase):
         data = {'network': {'name': 'foo',
                             'admin_state_up': True,
                             'tenant_id': self._tenant_id}}
-        with mock.patch.object(nsxlib, 'do_request',
+        with mock.patch.object(nsxlib.switch, 'do_request',
                                side_effect=nsx_exc.MaintenanceInProgress):
             net_req = self.new_create_request('networks', data, self.fmt)
             res = net_req.get_response(self.api)
@@ -340,32 +342,14 @@ class TestNetworksV2(test_plugin.TestNetworksV2, NsxPluginV2TestCase):
                               context.get_admin_context(),
                               net['network']['id'], data)
 
-    def test_update_network_with_name_calls_nsx(self):
-        with mock.patch.object(
-            nsxlib.switch, 'update_lswitch') as update_lswitch_mock:
-            # don't worry about deleting this network, do not use
-            # context manager
-            ctx = context.get_admin_context()
-            plugin = manager.NeutronManager.get_plugin()
-            net = plugin.create_network(
-                ctx, {'network': {'name': 'xxx',
-                                  'admin_state_up': True,
-                                  'shared': False,
-                                  'port_security_enabled': True}})
-            plugin.update_network(ctx, net['id'],
-                                  {'network': {'name': 'yyy'}})
-        update_lswitch_mock.assert_called_once_with(
-            mock.ANY, mock.ANY, 'yyy')
-
 
 class SecurityGroupsTestCase(ext_sg.SecurityGroupDBTestCase):
 
     def setUp(self):
-        test_lib.test_config['config_files'] = [
-            vmware.get_fake_conf('nsx.ini.test')]
+        test_lib.test_config['config_files'] = [get_fake_conf('nsx.ini.test')]
         # mock nsx api client
-        self.fc = fake.FakeClient(vmware.STUBS_PATH)
-        self.mock_nsx = mock.patch(vmware.NSXAPI_NAME, autospec=True)
+        self.fc = fake.FakeClient(STUBS_PATH)
+        self.mock_nsx = mock.patch(NSXAPI_NAME, autospec=True)
         instance = self.mock_nsx.start()
         instance.return_value.login.return_value = "the_cookie"
         # Avoid runs of the synchronizer looping call
@@ -373,7 +357,7 @@ class SecurityGroupsTestCase(ext_sg.SecurityGroupDBTestCase):
         patch_sync.start()
 
         instance.return_value.request.side_effect = self.fc.fake_request
-        super(SecurityGroupsTestCase, self).setUp(vmware.PLUGIN_NAME)
+        super(SecurityGroupsTestCase, self).setUp(PLUGIN_NAME)
 
 
 class TestSecurityGroup(ext_sg.TestSecurityGroups, SecurityGroupsTestCase):
@@ -399,6 +383,13 @@ class TestSecurityGroup(ext_sg.TestSecurityGroups, SecurityGroupsTestCase):
             self.deserialize(self.fmt, res)
             self.assertEqual(res.status_int, 400)
 
+    def test_update_security_group_deal_with_exc(self):
+        name = 'foo security group'
+        with mock.patch.object(nsxlib.switch, 'do_request',
+                               side_effect=api_exc.NsxApiException):
+            with self.security_group(name=name) as sg:
+                self.assertEqual(sg['security_group']['name'], name)
+
 
 class TestL3ExtensionManager(object):
 
@@ -409,7 +400,7 @@ class TestL3ExtensionManager(object):
             l3.RESOURCE_ATTRIBUTE_MAP[key].update(
                 l3_ext_gw_mode.EXTENDED_ATTRIBUTES_2_0.get(key, {}))
             l3.RESOURCE_ATTRIBUTE_MAP[key].update(
-                dvr.EXTENDED_ATTRIBUTES_2_0.get(key, {}))
+                dist_router.EXTENDED_ATTRIBUTES_2_0.get(key, {}))
         # Finally add l3 resources to the global attribute map
         attributes.RESOURCE_ATTRIBUTE_MAP.update(
             l3.RESOURCE_ATTRIBUTE_MAP)
@@ -451,19 +442,18 @@ class L3NatTest(test_l3_plugin.L3BaseForIntTests, NsxPluginV2TestCase):
     def _restore_l3_attribute_map(self):
         l3.RESOURCE_ATTRIBUTE_MAP = self._l3_attribute_map_bk
 
-    def setUp(self, plugin=vmware.PLUGIN_NAME, ext_mgr=None,
-              service_plugins=None):
+    def setUp(self, plugin=PLUGIN_NAME, ext_mgr=None, service_plugins=None):
         self._l3_attribute_map_bk = {}
         for item in l3.RESOURCE_ATTRIBUTE_MAP:
             self._l3_attribute_map_bk[item] = (
                 l3.RESOURCE_ATTRIBUTE_MAP[item].copy())
-        cfg.CONF.set_override('api_extensions_path', vmware.NSXEXT_PATH)
+        cfg.CONF.set_override('api_extensions_path', NSXEXT_PATH)
         l3_attribute_map_bk = backup_l3_attribute_map()
         self.addCleanup(restore_l3_attribute_map, l3_attribute_map_bk)
         ext_mgr = ext_mgr or TestL3ExtensionManager()
         super(L3NatTest, self).setUp(
             plugin=plugin, ext_mgr=ext_mgr, service_plugins=service_plugins)
-        plugin_instance = manager.NeutronManager.get_plugin()
+        plugin_instance = NeutronManager.get_plugin()
         self._plugin_name = "%s.%s" % (
             plugin_instance.__module__,
             plugin_instance.__class__.__name__)
@@ -471,7 +461,7 @@ class L3NatTest(test_l3_plugin.L3BaseForIntTests, NsxPluginV2TestCase):
 
     def _create_l3_ext_network(self, vlan_id=None):
         name = 'l3_ext_net'
-        net_type = utils.NetworkTypes.L3_EXT
+        net_type = NetworkTypes.L3_EXT
         providernet_args = {pnet.NETWORK_TYPE: net_type,
                             pnet.PHYSICAL_NETWORK: 'l3_gw_uuid'}
         if vlan_id:
@@ -490,7 +480,7 @@ class TestL3NatTestCase(L3NatTest,
 
     def _test_create_l3_ext_network(self, vlan_id=0):
         name = 'l3_ext_net'
-        net_type = utils.NetworkTypes.L3_EXT
+        net_type = NetworkTypes.L3_EXT
         expected = [('subnets', []), ('name', name), ('admin_state_up', True),
                     ('status', 'ACTIVE'), ('shared', False),
                     (external_net.EXTERNAL, True),
@@ -550,7 +540,7 @@ class TestL3NatTestCase(L3NatTest,
     def _test_router_create_with_distributed(self, dist_input, dist_expected,
                                              version='3.1', return_code=201):
         self.mock_instance.return_value.get_version.return_value = (
-            version_module.Version(version))
+            Version(version))
 
         data = {'tenant_id': 'whatever'}
         data['name'] = 'router1'
@@ -620,7 +610,7 @@ class TestL3NatTestCase(L3NatTest,
                         res.status_int)
 
     def test_router_add_gateway_invalid_network_returns_404(self):
-        # NOTE(salv-orlando): This unit test has been overridden
+        # NOTE(salv-orlando): This unit test has been overriden
         # as the nsx plugin support the ext_gw_mode extension
         # which mandates a uuid for the external network identifier
         with self.router() as r:
@@ -718,8 +708,7 @@ class TestL3NatTestCase(L3NatTest,
         self._test_create_l3_ext_network(666)
 
     def test_floatingip_with_assoc_fails(self):
-        self._test_floatingip_with_assoc_fails(
-            "%s.%s" % (self._plugin_name, "_update_fip_assoc"))
+        self._test_floatingip_with_assoc_fails(self._plugin_name)
 
     def test_floatingip_with_invalid_create_port(self):
         self._test_floatingip_with_invalid_create_port(self._plugin_name)
@@ -938,24 +927,17 @@ class TestL3NatTestCase(L3NatTest,
         subnets = self._list('subnets')['subnets']
         with self.subnet() as s:
             with self.port(subnet=s, device_id='1234',
-                           device_owner=constants.DEVICE_OWNER_DHCP) as port:
+                           device_owner=constants.DEVICE_OWNER_DHCP):
                 subnets = self._list('subnets')['subnets']
                 self.assertEqual(len(subnets), 1)
                 self.assertEqual(subnets[0]['host_routes'][0]['nexthop'],
                                  '10.0.0.2')
                 self.assertEqual(subnets[0]['host_routes'][0]['destination'],
                                  '169.254.169.254/32')
-            self._delete('ports', port['port']['id'])
+
             subnets = self._list('subnets')['subnets']
             # Test that route is deleted after dhcp port is removed
             self.assertEqual(len(subnets[0]['host_routes']), 0)
-
-    def _test_floatingip_update(self, expected_status):
-        super(TestL3NatTestCase, self).test_floatingip_update(
-            expected_status)
-
-    def test_floatingip_update(self):
-        self._test_floatingip_update(constants.FLOATINGIP_STATUS_DOWN)
 
     def test_floatingip_disassociate(self):
         with self.port() as p:
@@ -968,18 +950,12 @@ class TestL3NatTestCase(L3NatTest,
                     body = self._update('floatingips', fip['floatingip']['id'],
                                         {'floatingip': {'port_id': port_id}})
                     self.assertEqual(body['floatingip']['port_id'], port_id)
-                    # Floating IP status should be active
-                    self.assertEqual(constants.FLOATINGIP_STATUS_ACTIVE,
-                                     body['floatingip']['status'])
                     # Disassociate
                     body = self._update('floatingips', fip['floatingip']['id'],
                                         {'floatingip': {'port_id': None}})
                     body = self._show('floatingips', fip['floatingip']['id'])
                     self.assertIsNone(body['floatingip']['port_id'])
                     self.assertIsNone(body['floatingip']['fixed_ip_address'])
-                    # Floating IP status should be down
-                    self.assertEqual(constants.FLOATINGIP_STATUS_DOWN,
-                                     body['floatingip']['status'])
 
                 # check that notification was not requested
                 self.assertFalse(notify.called)
@@ -988,7 +964,7 @@ class TestL3NatTestCase(L3NatTest,
         with self._create_l3_ext_network() as net:
             with self.subnet(network=net) as s:
                 with mock.patch.object(
-                    nsxlib,
+                    nsxlib.router,
                     'do_request',
                     side_effect=nsx_exc.MaintenanceInProgress):
                     data = {'router': {'tenant_id': 'whatever'}}
@@ -1003,7 +979,7 @@ class TestL3NatTestCase(L3NatTest,
 
     def test_router_add_interface_port_removes_security_group(self):
         with self.router() as r:
-            with self.port(do_delete=False) as p:
+            with self.port(no_delete=True) as p:
                 body = self._router_interface_action('add',
                                                      r['router']['id'],
                                                      None,
@@ -1174,21 +1150,12 @@ class NeutronNsxOutOfSync(NsxPluginV2TestCase,
         res = req.get_response(self.ext_api)
         self.assertEqual(res.status_int, 200)
 
-    def _test_remove_router_interface_nsx_out_of_sync(self, unsync_action):
-        # Create external network and subnet
-        ext_net_id = self._create_network_and_subnet('1.1.1.0/24', True)[0]
+    def test_remove_router_interface_not_in_nsx(self):
         # Create internal network and subnet
         int_sub_id = self._create_network_and_subnet('10.0.0.0/24')[1]
         res = self._create_router('json', 'tenant')
         router = self.deserialize('json', res)
-        # Set gateway and add interface to router (needed to generate NAT rule)
-        req = self.new_update_request(
-            'routers',
-            {'router': {'external_gateway_info':
-                        {'network_id': ext_net_id}}},
-            router['router']['id'])
-        res = req.get_response(self.ext_api)
-        self.assertEqual(res.status_int, 200)
+        # Add interface to router (needed to generate NAT rule)
         req = self.new_action_request(
             'routers',
             {'subnet_id': int_sub_id},
@@ -1196,7 +1163,7 @@ class NeutronNsxOutOfSync(NsxPluginV2TestCase,
             "add_router_interface")
         res = req.get_response(self.ext_api)
         self.assertEqual(res.status_int, 200)
-        unsync_action()
+        self.fc._fake_lrouter_dict.clear()
         req = self.new_action_request(
             'routers',
             {'subnet_id': int_sub_id},
@@ -1204,27 +1171,6 @@ class NeutronNsxOutOfSync(NsxPluginV2TestCase,
             "remove_router_interface")
         res = req.get_response(self.ext_api)
         self.assertEqual(res.status_int, 200)
-
-    def test_remove_router_interface_not_in_nsx(self):
-
-        def unsync_action():
-            self.fc._fake_lrouter_dict.clear()
-            self.fc._fake_lrouter_nat_dict.clear()
-
-        self._test_remove_router_interface_nsx_out_of_sync(unsync_action)
-
-    def test_remove_router_interface_nat_rule_not_in_nsx(self):
-        self._test_remove_router_interface_nsx_out_of_sync(
-            self.fc._fake_lrouter_nat_dict.clear)
-
-    def test_remove_router_interface_duplicate_nat_rules_in_nsx(self):
-
-        def unsync_action():
-            # duplicate every entry in the nat rule dict
-            for (_rule_id, rule) in self.fc._fake_lrouter_nat_dict.items():
-                self.fc._fake_lrouter_nat_dict[uuid.uuid4()] = rule
-
-        self._test_remove_router_interface_nsx_out_of_sync(unsync_action)
 
     def test_update_router_not_in_nsx(self):
         res = self._create_router('json', 'tenant')

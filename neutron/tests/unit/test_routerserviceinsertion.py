@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 VMware, Inc. All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -21,6 +23,7 @@ from neutron.api.v2 import attributes
 from neutron.api.v2 import router
 from neutron.common import config
 from neutron import context as q_context
+from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
 from neutron.db import l3_db
 from neutron.db.loadbalancer import loadbalancer_db as lb_db
@@ -30,9 +33,9 @@ from neutron.db import servicetype_db as st_db
 from neutron.extensions import routedserviceinsertion as rsi
 from neutron.extensions import routerservicetype as rst
 from neutron.plugins.common import constants
+from neutron.tests import base
 from neutron.tests.unit import test_api_v2
 from neutron.tests.unit import testlib_api
-from neutron.tests.unit import testlib_plugin
 from neutron import wsgi
 
 _uuid = test_api_v2._uuid
@@ -151,8 +154,7 @@ class RouterServiceInsertionTestPlugin(
         pass
 
 
-class RouterServiceInsertionTestCase(testlib_api.SqlTestCase,
-                                     testlib_plugin.PluginSetupHelper):
+class RouterServiceInsertionTestCase(base.BaseTestCase):
     def setUp(self):
         super(RouterServiceInsertionTestCase, self).setUp()
         plugin = (
@@ -161,7 +163,8 @@ class RouterServiceInsertionTestCase(testlib_api.SqlTestCase,
         )
 
         # point config file to: neutron/tests/etc/neutron.conf.test
-        self.config_parse()
+        args = ['--config-file', test_api_v2.etcdir('neutron.conf.test')]
+        config.parse(args=args)
 
         #just stubbing core plugin with LoadBalancer plugin
         self.setup_coreplugin(plugin)
@@ -192,6 +195,7 @@ class RouterServiceInsertionTestCase(testlib_api.SqlTestCase,
 
     def tearDown(self):
         self.api = None
+        db.clear_db()
         super(RouterServiceInsertionTestCase, self).tearDown()
 
     def _setup_core_resources(self):

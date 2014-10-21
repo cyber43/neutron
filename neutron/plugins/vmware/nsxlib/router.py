@@ -22,9 +22,12 @@ from neutron.openstack.common import log
 from neutron.plugins.vmware.api_client import exception as api_exc
 from neutron.plugins.vmware.common import exceptions as nsx_exc
 from neutron.plugins.vmware.common import utils
-from neutron.plugins.vmware import nsxlib
-from neutron.plugins.vmware.nsxlib import switch
-from neutron.plugins.vmware.nsxlib import versioning
+from neutron.plugins.vmware.nsxlib import _build_uri_path
+from neutron.plugins.vmware.nsxlib import do_request
+from neutron.plugins.vmware.nsxlib import get_all_query_pages
+from neutron.plugins.vmware.nsxlib.switch import get_port
+from neutron.plugins.vmware.nsxlib.versioning import DEFAULT_VERSION
+from neutron.plugins.vmware.nsxlib.versioning import versioned
 
 HTTP_GET = "GET"
 HTTP_POST = "POST"
@@ -77,9 +80,8 @@ def _create_implicit_routing_lrouter(cluster, neutron_router_id, tenant_id,
         "SingleDefaultRouteImplicitRoutingConfig",
         distributed=distributed,
         **implicit_routing_config)
-    return nsxlib.do_request(HTTP_POST,
-                             nsxlib._build_uri_path(LROUTER_RESOURCE),
-                             jsonutils.dumps(lrouter_obj), cluster=cluster)
+    return do_request(HTTP_POST, _build_uri_path(LROUTER_RESOURCE),
+                      jsonutils.dumps(lrouter_obj), cluster=cluster)
 
 
 def create_implicit_routing_lrouter(cluster, neutron_router_id, tenant_id,
@@ -123,36 +125,33 @@ def create_explicit_routing_lrouter(cluster, neutron_router_id, tenant_id,
     lrouter_obj = _prepare_lrouter_body(
         display_name, neutron_router_id, tenant_id,
         "RoutingTableRoutingConfig", distributed=distributed)
-    router = nsxlib.do_request(HTTP_POST,
-                               nsxlib._build_uri_path(LROUTER_RESOURCE),
-                               jsonutils.dumps(lrouter_obj), cluster=cluster)
+    router = do_request(HTTP_POST, _build_uri_path(LROUTER_RESOURCE),
+                        jsonutils.dumps(lrouter_obj), cluster=cluster)
     default_gw = {'prefix': '0.0.0.0/0', 'next_hop_ip': nexthop}
     create_explicit_route_lrouter(cluster, router['uuid'], default_gw)
     return router
 
 
 def delete_lrouter(cluster, lrouter_id):
-    nsxlib.do_request(HTTP_DELETE,
-                      nsxlib._build_uri_path(LROUTER_RESOURCE,
-                                             resource_id=lrouter_id),
-                      cluster=cluster)
+    do_request(HTTP_DELETE, _build_uri_path(LROUTER_RESOURCE,
+                                            resource_id=lrouter_id),
+               cluster=cluster)
 
 
 def get_lrouter(cluster, lrouter_id):
-    return nsxlib.do_request(HTTP_GET,
-                             nsxlib._build_uri_path(
-                                 LROUTER_RESOURCE,
-                                 resource_id=lrouter_id,
-                                 relations='LogicalRouterStatus'),
-                             cluster=cluster)
+    return do_request(HTTP_GET,
+                      _build_uri_path(LROUTER_RESOURCE,
+                                      resource_id=lrouter_id,
+                                      relations='LogicalRouterStatus'),
+                      cluster=cluster)
 
 
 def query_lrouters(cluster, fields=None, filters=None):
-    return nsxlib.get_all_query_pages(
-        nsxlib._build_uri_path(LROUTER_RESOURCE,
-                               fields=fields,
-                               relations='LogicalRouterStatus',
-                               filters=filters),
+    return get_all_query_pages(
+        _build_uri_path(LROUTER_RESOURCE,
+                        fields=fields,
+                        relations='LogicalRouterStatus',
+                        filters=filters),
         cluster)
 
 
@@ -181,40 +180,39 @@ def update_implicit_routing_lrouter(cluster, r_id, display_name, nexthop):
             "default_route_next_hop")
         if nh_element:
             nh_element["gateway_ip_address"] = nexthop
-    return nsxlib.do_request(HTTP_PUT,
-                             nsxlib._build_uri_path(LROUTER_RESOURCE,
-                                                    resource_id=r_id),
-                             jsonutils.dumps(lrouter_obj),
-                             cluster=cluster)
+    return do_request(HTTP_PUT, _build_uri_path(LROUTER_RESOURCE,
+                                                resource_id=r_id),
+                      jsonutils.dumps(lrouter_obj),
+                      cluster=cluster)
 
 
 def get_explicit_routes_lrouter(cluster, router_id, protocol_type='static'):
     static_filter = {'protocol': protocol_type}
-    existing_routes = nsxlib.do_request(
+    existing_routes = do_request(
         HTTP_GET,
-        nsxlib._build_uri_path(LROUTERRIB_RESOURCE,
-                               filters=static_filter,
-                               fields="*",
-                               parent_resource_id=router_id),
+        _build_uri_path(LROUTERRIB_RESOURCE,
+                        filters=static_filter,
+                        fields="*",
+                        parent_resource_id=router_id),
         cluster=cluster)['results']
     return existing_routes
 
 
 def delete_explicit_route_lrouter(cluster, router_id, route_id):
-    nsxlib.do_request(HTTP_DELETE,
-                      nsxlib._build_uri_path(LROUTERRIB_RESOURCE,
-                                             resource_id=route_id,
-                                             parent_resource_id=router_id),
-                      cluster=cluster)
+    do_request(HTTP_DELETE,
+               _build_uri_path(LROUTERRIB_RESOURCE,
+                               resource_id=route_id,
+                               parent_resource_id=router_id),
+               cluster=cluster)
 
 
 def create_explicit_route_lrouter(cluster, router_id, route):
     next_hop_ip = route.get("nexthop") or route.get("next_hop_ip")
     prefix = route.get("destination") or route.get("prefix")
-    uuid = nsxlib.do_request(
+    uuid = do_request(
         HTTP_POST,
-        nsxlib._build_uri_path(LROUTERRIB_RESOURCE,
-                               parent_resource_id=router_id),
+        _build_uri_path(LROUTERRIB_RESOURCE,
+                        parent_resource_id=router_id),
         jsonutils.dumps({
             "action": "accept",
             "next_hop_ip": next_hop_ip,
@@ -269,12 +267,12 @@ def update_explicit_routes_lrouter(cluster, router_id, routes):
 def get_default_route_explicit_routing_lrouter_v33(cluster, router_id):
     static_filter = {"protocol": "static",
                      "prefix": "0.0.0.0/0"}
-    default_route = nsxlib.do_request(
+    default_route = do_request(
         HTTP_GET,
-        nsxlib._build_uri_path(LROUTERRIB_RESOURCE,
-                               filters=static_filter,
-                               fields="*",
-                               parent_resource_id=router_id),
+        _build_uri_path(LROUTERRIB_RESOURCE,
+                        filters=static_filter,
+                        fields="*",
+                        parent_resource_id=router_id),
         cluster=cluster)["results"][0]
     return default_route
 
@@ -295,13 +293,12 @@ def update_default_gw_explicit_routing_lrouter(cluster, router_id, next_hop):
                              "next_hop_ip": next_hop,
                              "prefix": "0.0.0.0/0",
                              "protocol": "static"}
-        nsxlib.do_request(HTTP_PUT,
-                          nsxlib._build_uri_path(
-                              LROUTERRIB_RESOURCE,
-                              resource_id=default_route['uuid'],
-                              parent_resource_id=router_id),
-                          jsonutils.dumps(new_default_route),
-                          cluster=cluster)
+        do_request(HTTP_PUT,
+                   _build_uri_path(LROUTERRIB_RESOURCE,
+                                   resource_id=default_route['uuid'],
+                                   parent_resource_id=router_id),
+                   jsonutils.dumps(new_default_route),
+                   cluster=cluster)
 
 
 def update_explicit_routing_lrouter(cluster, router_id,
@@ -316,11 +313,9 @@ def update_explicit_routing_lrouter(cluster, router_id,
 
 def query_lrouter_lports(cluster, lr_uuid, fields="*",
                          filters=None, relations=None):
-    uri = nsxlib._build_uri_path(LROUTERPORT_RESOURCE,
-                                 parent_resource_id=lr_uuid,
-                                 fields=fields, filters=filters,
-                                 relations=relations)
-    return nsxlib.do_request(HTTP_GET, uri, cluster=cluster)['results']
+    uri = _build_uri_path(LROUTERPORT_RESOURCE, parent_resource_id=lr_uuid,
+                          fields=fields, filters=filters, relations=relations)
+    return do_request(HTTP_GET, uri, cluster=cluster)['results']
 
 
 def create_router_lport(cluster, lrouter_uuid, tenant_id, neutron_port_id,
@@ -338,10 +333,10 @@ def create_router_lport(cluster, lrouter_uuid, tenant_id, neutron_port_id,
     # when creating the fake_ext_gw there is no mac_address present.
     if mac_address:
         lport_obj['mac_address'] = mac_address
-    path = nsxlib._build_uri_path(LROUTERPORT_RESOURCE,
-                                  parent_resource_id=lrouter_uuid)
-    result = nsxlib.do_request(HTTP_POST, path, jsonutils.dumps(lport_obj),
-                               cluster=cluster)
+    path = _build_uri_path(LROUTERPORT_RESOURCE,
+                           parent_resource_id=lrouter_uuid)
+    result = do_request(HTTP_POST, path, jsonutils.dumps(lport_obj),
+                        cluster=cluster)
 
     LOG.debug(_("Created logical port %(lport_uuid)s on "
                 "logical router %(lrouter_uuid)s"),
@@ -365,12 +360,12 @@ def update_router_lport(cluster, lrouter_uuid, lrouter_port_uuid,
     for key in lport_obj.keys():
         if lport_obj[key] is None:
             del lport_obj[key]
-    path = nsxlib._build_uri_path(LROUTERPORT_RESOURCE,
-                                  lrouter_port_uuid,
-                                  parent_resource_id=lrouter_uuid)
-    result = nsxlib.do_request(HTTP_PUT, path,
-                               jsonutils.dumps(lport_obj),
-                               cluster=cluster)
+    path = _build_uri_path(LROUTERPORT_RESOURCE,
+                           lrouter_port_uuid,
+                           parent_resource_id=lrouter_uuid)
+    result = do_request(HTTP_PUT, path,
+                        jsonutils.dumps(lport_obj),
+                        cluster=cluster)
     LOG.debug(_("Updated logical port %(lport_uuid)s on "
                 "logical router %(lrouter_uuid)s"),
               {'lport_uuid': lrouter_port_uuid, 'lrouter_uuid': lrouter_uuid})
@@ -379,9 +374,8 @@ def update_router_lport(cluster, lrouter_uuid, lrouter_port_uuid,
 
 def delete_router_lport(cluster, lrouter_uuid, lport_uuid):
     """Creates a logical port on the assigned logical router."""
-    path = nsxlib._build_uri_path(LROUTERPORT_RESOURCE, lport_uuid,
-                                  lrouter_uuid)
-    nsxlib.do_request(HTTP_DELETE, path, cluster=cluster)
+    path = _build_uri_path(LROUTERPORT_RESOURCE, lport_uuid, lrouter_uuid)
+    do_request(HTTP_DELETE, path, cluster=cluster)
     LOG.debug(_("Delete logical router port %(lport_uuid)s on "
                 "logical router %(lrouter_uuid)s"),
               {'lport_uuid': lport_uuid,
@@ -389,8 +383,8 @@ def delete_router_lport(cluster, lrouter_uuid, lport_uuid):
 
 
 def delete_peer_router_lport(cluster, lr_uuid, ls_uuid, lp_uuid):
-    nsx_port = switch.get_port(cluster, ls_uuid, lp_uuid,
-                               relations="LogicalPortAttachment")
+    nsx_port = get_port(cluster, ls_uuid, lp_uuid,
+                        relations="LogicalPortAttachment")
     relations = nsx_port.get('_relations')
     if relations:
         att_data = relations.get('LogicalPortAttachment')
@@ -425,8 +419,8 @@ def plug_router_port_attachment(cluster, router_id, port_id,
        - L3GatewayAttachment [-> L3GatewayService uuid]
     For the latter attachment type a VLAN ID can be specified as well.
     """
-    uri = nsxlib._build_uri_path(LROUTERPORT_RESOURCE, port_id, router_id,
-                                 is_attachment=True)
+    uri = _build_uri_path(LROUTERPORT_RESOURCE, port_id, router_id,
+                          is_attachment=True)
     attach_obj = {}
     attach_obj["type"] = nsx_attachment_type
     if nsx_attachment_type == "PatchAttachment":
@@ -438,7 +432,7 @@ def plug_router_port_attachment(cluster, router_id, port_id,
     else:
         raise nsx_exc.InvalidAttachmentType(
             attachment_type=nsx_attachment_type)
-    return nsxlib.do_request(
+    return do_request(
         HTTP_PUT, uri, jsonutils.dumps(attach_obj), cluster=cluster)
 
 
@@ -453,10 +447,9 @@ def _create_nat_match_obj(**kwargs):
 
 def _create_lrouter_nat_rule(cluster, router_id, nat_rule_obj):
     LOG.debug(_("Creating NAT rule: %s"), nat_rule_obj)
-    uri = nsxlib._build_uri_path(LROUTERNAT_RESOURCE,
-                                 parent_resource_id=router_id)
-    return nsxlib.do_request(HTTP_POST, uri, jsonutils.dumps(nat_rule_obj),
-                             cluster=cluster)
+    uri = _build_uri_path(LROUTERNAT_RESOURCE, parent_resource_id=router_id)
+    return do_request(HTTP_POST, uri, jsonutils.dumps(nat_rule_obj),
+                      cluster=cluster)
 
 
 def _build_snat_rule_obj(min_src_ip, max_src_ip, nat_match_obj):
@@ -551,7 +544,6 @@ def create_lrouter_dnat_rule_v3(cluster, router_id, dst_ip, to_dst_port=None,
 def delete_nat_rules_by_match(cluster, router_id, rule_type,
                               max_num_expected,
                               min_num_expected=0,
-                              raise_on_len_mismatch=True,
                               **kwargs):
     # remove nat rules
     nat_rules = query_nat_rules(cluster, router_id)
@@ -565,38 +557,25 @@ def delete_nat_rules_by_match(cluster, router_id, rule_type,
                 break
         else:
             to_delete_ids.append(r['uuid'])
-    num_rules_to_delete = len(to_delete_ids)
-    if (num_rules_to_delete < min_num_expected or
-        num_rules_to_delete > max_num_expected):
-        if raise_on_len_mismatch:
-            raise nsx_exc.NatRuleMismatch(actual_rules=num_rules_to_delete,
-                                          min_rules=min_num_expected,
-                                          max_rules=max_num_expected)
-        else:
-            LOG.warn(_("Found %(actual_rule_num)d matching NAT rules, which "
-                       "is not in the expected range (%(min_exp_rule_num)d,"
-                       "%(max_exp_rule_num)d)"),
-                     {'actual_rule_num': num_rules_to_delete,
-                      'min_exp_rule_num': min_num_expected,
-                      'max_exp_rule_num': max_num_expected})
+    if not (len(to_delete_ids) in
+            range(min_num_expected, max_num_expected + 1)):
+        raise nsx_exc.NatRuleMismatch(actual_rules=len(to_delete_ids),
+                                      min_rules=min_num_expected,
+                                      max_rules=max_num_expected)
 
     for rule_id in to_delete_ids:
         delete_router_nat_rule(cluster, router_id, rule_id)
-    # Return number of deleted rules - useful at least for
-    # testing purposes
-    return num_rules_to_delete
 
 
 def delete_router_nat_rule(cluster, router_id, rule_id):
-    uri = nsxlib._build_uri_path(LROUTERNAT_RESOURCE, rule_id, router_id)
-    nsxlib.do_request(HTTP_DELETE, uri, cluster=cluster)
+    uri = _build_uri_path(LROUTERNAT_RESOURCE, rule_id, router_id)
+    do_request(HTTP_DELETE, uri, cluster=cluster)
 
 
 def query_nat_rules(cluster, router_id, fields="*", filters=None):
-    uri = nsxlib._build_uri_path(LROUTERNAT_RESOURCE,
-                                 parent_resource_id=router_id,
-                                 fields=fields, filters=filters)
-    return nsxlib.get_all_query_pages(uri, cluster)
+    uri = _build_uri_path(LROUTERNAT_RESOURCE, parent_resource_id=router_id,
+                          fields=fields, filters=filters)
+    return get_all_query_pages(uri, cluster)
 
 
 # NOTE(salvatore-orlando): The following FIXME applies in general to
@@ -604,9 +583,9 @@ def query_nat_rules(cluster, router_id, fields="*", filters=None):
 # FIXME(salvatore-orlando): need a lock around the list of IPs on an iface
 def update_lrouter_port_ips(cluster, lrouter_id, lport_id,
                             ips_to_add, ips_to_remove):
-    uri = nsxlib._build_uri_path(LROUTERPORT_RESOURCE, lport_id, lrouter_id)
+    uri = _build_uri_path(LROUTERPORT_RESOURCE, lport_id, lrouter_id)
     try:
-        port = nsxlib.do_request(HTTP_GET, uri, cluster=cluster)
+        port = do_request(HTTP_GET, uri, cluster=cluster)
         # TODO(salvatore-orlando): Enforce ips_to_add intersection with
         # ips_to_remove is empty
         ip_address_set = set(port['ip_addresses'])
@@ -614,8 +593,7 @@ def update_lrouter_port_ips(cluster, lrouter_id, lport_id,
         ip_address_set = ip_address_set | set(ips_to_add)
         # Set is not JSON serializable - convert to list
         port['ip_addresses'] = list(ip_address_set)
-        nsxlib.do_request(HTTP_PUT, uri, jsonutils.dumps(port),
-                          cluster=cluster)
+        do_request(HTTP_PUT, uri, jsonutils.dumps(port), cluster=cluster)
     except exception.NotFound:
         # FIXME(salv-orlando):avoid raising different exception
         data = {'lport_id': lport_id, 'lrouter_id': lrouter_id}
@@ -632,34 +610,33 @@ def update_lrouter_port_ips(cluster, lrouter_id, lport_id,
 
 ROUTER_FUNC_DICT = {
     'create_lrouter': {
-        2: {versioning.DEFAULT_VERSION: create_implicit_routing_lrouter, },
-        3: {versioning.DEFAULT_VERSION: create_implicit_routing_lrouter,
+        2: {DEFAULT_VERSION: create_implicit_routing_lrouter, },
+        3: {DEFAULT_VERSION: create_implicit_routing_lrouter,
             1: create_implicit_routing_lrouter_with_distribution,
             2: create_explicit_routing_lrouter, }, },
     'update_lrouter': {
-        2: {versioning.DEFAULT_VERSION: update_implicit_routing_lrouter, },
-        3: {versioning.DEFAULT_VERSION: update_implicit_routing_lrouter,
+        2: {DEFAULT_VERSION: update_implicit_routing_lrouter, },
+        3: {DEFAULT_VERSION: update_implicit_routing_lrouter,
             2: update_explicit_routing_lrouter, }, },
     'create_lrouter_dnat_rule': {
-        2: {versioning.DEFAULT_VERSION: create_lrouter_dnat_rule_v2, },
-        3: {versioning.DEFAULT_VERSION: create_lrouter_dnat_rule_v3, }, },
+        2: {DEFAULT_VERSION: create_lrouter_dnat_rule_v2, },
+        3: {DEFAULT_VERSION: create_lrouter_dnat_rule_v3, }, },
     'create_lrouter_snat_rule': {
-        2: {versioning.DEFAULT_VERSION: create_lrouter_snat_rule_v2, },
-        3: {versioning.DEFAULT_VERSION: create_lrouter_snat_rule_v3, }, },
+        2: {DEFAULT_VERSION: create_lrouter_snat_rule_v2, },
+        3: {DEFAULT_VERSION: create_lrouter_snat_rule_v3, }, },
     'create_lrouter_nosnat_rule': {
-        2: {versioning.DEFAULT_VERSION: create_lrouter_nosnat_rule_v2, },
-        3: {versioning.DEFAULT_VERSION: create_lrouter_nosnat_rule_v3, }, },
+        2: {DEFAULT_VERSION: create_lrouter_nosnat_rule_v2, },
+        3: {DEFAULT_VERSION: create_lrouter_nosnat_rule_v3, }, },
     'create_lrouter_nodnat_rule': {
-        2: {versioning.DEFAULT_VERSION: create_lrouter_nodnat_rule_v2, },
-        3: {versioning.DEFAULT_VERSION: create_lrouter_nodnat_rule_v3, }, },
+        2: {DEFAULT_VERSION: create_lrouter_nodnat_rule_v2, },
+        3: {DEFAULT_VERSION: create_lrouter_nodnat_rule_v3, }, },
     'get_default_route_explicit_routing_lrouter': {
-        3: {versioning.DEFAULT_VERSION:
-            get_default_route_explicit_routing_lrouter_v32,
+        3: {DEFAULT_VERSION: get_default_route_explicit_routing_lrouter_v32,
             2: get_default_route_explicit_routing_lrouter_v32, }, },
 }
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def create_lrouter(cluster, *args, **kwargs):
     if kwargs.get('distributed', None):
         v = cluster.api_client.get_version()
@@ -668,12 +645,12 @@ def create_lrouter(cluster, *args, **kwargs):
         return v
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def get_default_route_explicit_routing_lrouter(cluster, *args, **kwargs):
     pass
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def update_lrouter(cluster, *args, **kwargs):
     if kwargs.get('routes', None):
         v = cluster.api_client.get_version()
@@ -682,21 +659,21 @@ def update_lrouter(cluster, *args, **kwargs):
         return v
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def create_lrouter_dnat_rule(cluster, *args, **kwargs):
     pass
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def create_lrouter_snat_rule(cluster, *args, **kwargs):
     pass
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def create_lrouter_nosnat_rule(cluster, *args, **kwargs):
     pass
 
 
-@versioning.versioned(ROUTER_FUNC_DICT)
+@versioned(ROUTER_FUNC_DICT)
 def create_lrouter_nodnat_rule(cluster, *args, **kwargs):
     pass

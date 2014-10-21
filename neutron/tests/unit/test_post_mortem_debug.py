@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 # All Rights Reserved.
 #
@@ -16,7 +18,7 @@
 import sys
 
 import mock
-from six import moves
+from six.moves import xrange
 
 from neutron.tests import base
 from neutron.tests import post_mortem_debug
@@ -64,7 +66,7 @@ class TestGetIgnoredTraceback(base.BaseTestCase):
 
         tb = root_tb
         tracebacks = [tb]
-        for x in moves.xrange(len(ignored_bit_array) - 1):
+        for x in xrange(len(ignored_bit_array) - 1):
             tb.tb_next = mock.Mock()
             tb = tb.tb_next
             tracebacks.append(tb)

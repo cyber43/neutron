@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2011 OpenStack Foundation.
 # All Rights Reserved.
 #
@@ -13,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import abc
+from abc import abstractmethod
 
 from neutron.api import extensions
 from neutron.openstack.common import jsonutils
@@ -28,7 +30,7 @@ class FoxInSocksController(wsgi.Controller):
 
 class FoxInSocksPluginInterface(extensions.PluginInterface):
 
-    @abc.abstractmethod
+    @abstractmethod
     def method_to_support_foxnsox_extension(self):
         pass
 

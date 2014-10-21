@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 Mellanox Technologies, Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +37,7 @@ class RetryDecorator(object):
     :param retries: number of times to try before giving up
     :raises: exceptionToCheck
     """
+    sleep_fn = time.sleep
 
     def __init__(self, exceptionToCheck,
                  interval=cfg.CONF.ESWITCH.request_timeout / 1000,
@@ -55,7 +58,7 @@ class RetryDecorator(object):
                 except self.exc:
                     LOG.debug(_("Request timeout - call again after "
                               "%s seconds"), sleep_interval)
-                    time.sleep(sleep_interval)
+                    RetryDecorator.sleep_fn(sleep_interval)
                     num_of_iter -= 1
                     sleep_interval *= self.backoff_rate
 

@@ -48,8 +48,17 @@ if sys.version_info < (2, 7):
 else:
     import json
 
+try:
+    import xmlrpclib
+except ImportError:
+    # NOTE(jaypipes): xmlrpclib was renamed to xmlrpc.client in Python3
+    #                 however the function and object call signatures
+    #                 remained the same. This whole try/except block should
+    #                 be removed and replaced with a call to six.moves once
+    #                 six 1.4.2 is released. See http://bit.ly/1bqrVzu
+    import xmlrpc.client as xmlrpclib
+
 import six
-import six.moves.xmlrpc_client as xmlrpclib
 
 from neutron.openstack.common import gettextutils
 from neutron.openstack.common import importutils
@@ -168,12 +177,12 @@ def dumps(value, default=to_primitive, **kwargs):
     return json.dumps(value, default=default, **kwargs)
 
 
-def loads(s, encoding='utf-8', **kwargs):
-    return json.loads(strutils.safe_decode(s, encoding), **kwargs)
+def loads(s, encoding='utf-8'):
+    return json.loads(strutils.safe_decode(s, encoding))
 
 
-def load(fp, encoding='utf-8', **kwargs):
-    return json.load(codecs.getreader(encoding)(fp), **kwargs)
+def load(fp, encoding='utf-8'):
+    return json.load(codecs.getreader(encoding)(fp))
 
 
 try:

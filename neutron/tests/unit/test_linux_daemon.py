@@ -1,3 +1,4 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
 # Copyright 2012 New Dream Network, LLC (DreamHost)
 #
@@ -12,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import os
 import sys
@@ -30,10 +33,12 @@ class TestPidfile(base.BaseTestCase):
         super(TestPidfile, self).setUp()
         self.os_p = mock.patch.object(daemon, 'os')
         self.os = self.os_p.start()
+        self.addCleanup(self.os_p.stop)
         self.os.open.return_value = FAKE_FD
 
         self.fcntl_p = mock.patch.object(daemon, 'fcntl')
         self.fcntl = self.fcntl_p.start()
+        self.addCleanup(self.fcntl_p.stop)
         self.fcntl.flock.return_value = 0
 
     def test_init(self):
@@ -42,8 +47,7 @@ class TestPidfile(base.BaseTestCase):
 
         daemon.Pidfile('thefile', 'python')
         self.os.open.assert_called_once_with('thefile', os.O_CREAT | os.O_RDWR)
-        self.fcntl.flock.assert_called_once_with(FAKE_FD, self.fcntl.LOCK_EX |
-                                                 self.fcntl.LOCK_NB)
+        self.fcntl.flock.assert_called_once_with(FAKE_FD, self.fcntl.LOCK_EX)
 
     def test_init_open_fail(self):
         self.os.open.side_effect = IOError
@@ -60,7 +64,7 @@ class TestPidfile(base.BaseTestCase):
         p = daemon.Pidfile('thefile', 'python')
         p.unlock()
         self.fcntl.flock.assert_has_calls([
-            mock.call(FAKE_FD, self.fcntl.LOCK_EX | self.fcntl.LOCK_NB),
+            mock.call(FAKE_FD, self.fcntl.LOCK_EX),
             mock.call(FAKE_FD, self.fcntl.LOCK_UN)]
         )
 
@@ -127,6 +131,11 @@ class TestDaemon(base.BaseTestCase):
 
         self.pidfile_p = mock.patch.object(daemon, 'Pidfile')
         self.pidfile = self.pidfile_p.start()
+
+    def tearDown(self):
+        self.pidfile_p.stop()
+        self.os_p.stop()
+        super(TestDaemon, self).tearDown()
 
     def test_init(self):
         d = daemon.Daemon('pidfile')

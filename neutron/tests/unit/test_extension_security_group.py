@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import contextlib
+import os
 
 import mock
 import webob.exc
@@ -30,6 +31,12 @@ from neutron.tests.unit import test_db_plugin
 
 DB_PLUGIN_KLASS = ('neutron.tests.unit.test_extension_security_group.'
                    'SecurityGroupTestPlugin')
+ROOTDIR = os.path.dirname(os.path.dirname(__file__))
+ETCDIR = os.path.join(ROOTDIR, 'etc')
+
+
+def etcdir(*p):
+    return os.path.join(ETCDIR, *p)
 
 
 class SecurityGroupTestExtensionManager(object):
@@ -56,7 +63,7 @@ class SecurityGroupsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
 
         data = {'security_group': {'name': name,
                                    'tenant_id': kwargs.get('tenant_id',
-                                                           'test-tenant'),
+                                                           'test_tenant'),
                                    'description': description}}
         security_group_req = self.new_create_request('security-groups', data,
                                                      fmt)
@@ -69,7 +76,7 @@ class SecurityGroupsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
     def _build_security_group_rule(self, security_group_id, direction, proto,
                                    port_range_min=None, port_range_max=None,
                                    remote_ip_prefix=None, remote_group_id=None,
-                                   tenant_id='test-tenant',
+                                   tenant_id='test_tenant',
                                    ethertype=const.IPv4):
 
         data = {'security_group_rule': {'security_group_id': security_group_id,
@@ -117,12 +124,12 @@ class SecurityGroupsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
 
     @contextlib.contextmanager
     def security_group(self, name='webservers', description='webservers',
-                       fmt=None, do_delete=True):
+                       fmt=None, no_delete=False):
         if not fmt:
             fmt = self.fmt
         security_group = self._make_security_group(fmt, name, description)
         yield security_group
-        if do_delete:
+        if not no_delete:
             self._delete('security-groups',
                          security_group['security_group']['id'])
 
@@ -132,7 +139,7 @@ class SecurityGroupsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                             direction='ingress', protocol=const.PROTO_NAME_TCP,
                             port_range_min='22', port_range_max='22',
                             remote_ip_prefix=None, remote_group_id=None,
-                            fmt=None, do_delete=True, ethertype=const.IPv4):
+                            fmt=None, no_delete=False, ethertype=const.IPv4):
         if not fmt:
             fmt = self.fmt
         rule = self._build_security_group_rule(security_group_id,
@@ -144,7 +151,7 @@ class SecurityGroupsTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                                                ethertype=ethertype)
         security_group_rule = self._make_security_group_rule(self.fmt, rule)
         yield security_group_rule
-        if do_delete:
+        if not no_delete:
             self._delete('security-group-rules',
                          security_group_rule['security_group_rule']['id'])
 
@@ -546,7 +553,7 @@ class TestSecurityGroups(SecurityGroupDBTestCase):
     def test_delete_security_group(self):
         name = 'webservers'
         description = 'my webservers'
-        with self.security_group(name, description, do_delete=False) as sg:
+        with self.security_group(name, description, no_delete=True) as sg:
             remote_group_id = sg['security_group']['id']
             self._delete('security-groups', remote_group_id,
                          webob.exc.HTTPNoContent.code)
@@ -571,16 +578,6 @@ class TestSecurityGroups(SecurityGroupDBTestCase):
         neutron_context = context.Context('', 'test-tenant')
         sg = self._list('security-groups',
                         neutron_context=neutron_context).get('security_groups')
-        self.assertEqual(len(sg), 1)
-
-    def test_security_group_port_create_creates_default_security_group(self):
-        res = self._create_network(self.fmt, 'net1', True,
-                                   tenant_id='not_admin',
-                                   set_context=True)
-        net1 = self.deserialize(self.fmt, res)
-        res = self._create_port(self.fmt, net1['network']['id'],
-                                tenant_id='not_admin', set_context=True)
-        sg = self._list('security-groups').get('security_groups')
         self.assertEqual(len(sg), 1)
 
     def test_default_security_group_rules(self):
@@ -962,19 +959,6 @@ class TestSecurityGroups(SecurityGroupDBTestCase):
                 self.deserialize(self.fmt, res)
                 self.assertEqual(res.status_int, webob.exc.HTTPBadRequest.code)
 
-    def test_create_security_group_rule_icmp_with_code_only(self):
-        name = 'webservers'
-        description = 'my webservers'
-        with self.security_group(name, description) as sg:
-            security_group_id = sg['security_group']['id']
-            with self.security_group_rule(security_group_id):
-                rule = self._build_security_group_rule(
-                    sg['security_group']['id'], 'ingress',
-                    const.PROTO_NAME_ICMP, None, '2')
-                res = self._create_security_group_rule(self.fmt, rule)
-                self.deserialize(self.fmt, res)
-                self.assertEqual(res.status_int, webob.exc.HTTPBadRequest.code)
-
     def test_list_ports_security_group(self):
         with self.network() as n:
             with self.subnet(n):
@@ -1253,7 +1237,7 @@ class TestSecurityGroups(SecurityGroupDBTestCase):
             rule = {'security_group_id': sg['security_group']['id'],
                     'direction': 'ingress',
                     'ethertype': 'IPv4',
-                    'tenant_id': 'test-tenant'}
+                    'tenant_id': 'test_tenant'}
 
             res = self._create_security_group_rule(
                 self.fmt, {'security_group_rule': rule})
@@ -1268,11 +1252,11 @@ class TestSecurityGroups(SecurityGroupDBTestCase):
             rule_v4 = {'security_group_id': sg['security_group']['id'],
                        'direction': 'ingress',
                        'ethertype': 'IPv4',
-                       'tenant_id': 'test-tenant'}
+                       'tenant_id': 'test_tenant'}
             rule_v6 = {'security_group_id': sg['security_group']['id'],
                        'direction': 'ingress',
                        'ethertype': 'IPv6',
-                       'tenant_id': 'test-tenant'}
+                       'tenant_id': 'test_tenant'}
 
             rules = {'security_group_rules': [rule_v4, rule_v6]}
             res = self._create_security_group_rule(self.fmt, rules)
@@ -1435,16 +1419,6 @@ class TestConvertIPPrefixToCIDR(base.BaseTestCase):
         addresses = ['10.1.0.0/16', '10.1.2.3/32', '2001:db8:1234::/48']
         for addr in addresses:
             self.assertEqual(ext_sg.convert_ip_prefix_to_cidr(addr), addr)
-
-
-class TestConvertProtocol(base.BaseTestCase):
-    def test_convert_numeric_protocol(self):
-        self.assertIsInstance(ext_sg.convert_protocol('2'), str)
-
-    def test_convert_bad_protocol(self):
-        for val in ['bad', '256', '-1']:
-            self.assertRaises(ext_sg.SecurityGroupRuleInvalidProtocol,
-                              ext_sg.convert_protocol, val)
 
 
 class TestSecurityGroupsXML(TestSecurityGroups):

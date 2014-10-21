@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import abc
+from abc import abstractmethod
 
 from oslo.config import cfg
 
@@ -100,20 +100,7 @@ RESOURCE_ATTRIBUTE_MAP = {
                       'is_visible': True},
         EXTERNAL_GW_INFO: {'allow_post': True, 'allow_put': True,
                            'is_visible': True, 'default': None,
-                           'enforce_policy': True,
-                           'validate': {
-                               'type:dict_or_nodata': {
-                                   'network_id': {'type:uuid': None,
-                                                  'required': True},
-                                   'external_fixed_ips': {
-                                       'convert_list_to':
-                                       attr.convert_kvp_list_to_dict,
-                                       'type:fixed_ips': None,
-                                       'default': None,
-                                       'required': False,
-                                   }
-                               }
-                           }}
+                           'enforce_policy': True}
     },
     'floatingips': {
         'id': {'allow_post': False, 'allow_put': False,
@@ -187,7 +174,6 @@ class L3(extensions.ExtensionDescriptor):
         """Returns Ext Resources."""
         plural_mappings = resource_helper.build_plural_mappings(
             {}, RESOURCE_ATTRIBUTE_MAP)
-        plural_mappings['external_fixed_ips'] = 'external_fixed_ip'
         attr.PLURALS.update(plural_mappings)
         action_map = {'router': {'add_router_interface': 'PUT',
                                  'remove_router_interface': 'PUT'}}
@@ -210,52 +196,52 @@ class L3(extensions.ExtensionDescriptor):
 
 class RouterPluginBase(object):
 
-    @abc.abstractmethod
+    @abstractmethod
     def create_router(self, context, router):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def update_router(self, context, id, router):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_router(self, context, id, fields=None):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def delete_router(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_routers(self, context, filters=None, fields=None,
                     sorts=None, limit=None, marker=None, page_reverse=False):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def add_router_interface(self, context, router_id, interface_info):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def remove_router_interface(self, context, router_id, interface_info):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def create_floatingip(self, context, floatingip):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def update_floatingip(self, context, id, floatingip):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_floatingip(self, context, id, fields=None):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def delete_floatingip(self, context, id):
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_floatingips(self, context, filters=None, fields=None,
                         sorts=None, limit=None, marker=None,
                         page_reverse=False):

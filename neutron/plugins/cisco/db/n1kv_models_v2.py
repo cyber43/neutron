@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cisco Systems, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,9 +13,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Abhishek Raut, Cisco Systems Inc.
+# @author: Rudrajit Tapadar, Cisco Systems Inc.
 
 import sqlalchemy as sa
-from sqlalchemy import sql
 
 from neutron.db import model_base
 from neutron.db import models_v2
@@ -34,8 +38,7 @@ class N1kvVlanAllocation(model_base.BASEV2):
                                  primary_key=True)
     vlan_id = sa.Column(sa.Integer, nullable=False, primary_key=True,
                         autoincrement=False)
-    allocated = sa.Column(sa.Boolean, nullable=False, default=False,
-                          server_default=sql.false())
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False)
     network_profile_id = sa.Column(sa.String(36),
                                    sa.ForeignKey('cisco_network_profiles.id',
                                                  ondelete="CASCADE"),
@@ -49,8 +52,7 @@ class N1kvVxlanAllocation(model_base.BASEV2):
 
     vxlan_id = sa.Column(sa.Integer, nullable=False, primary_key=True,
                          autoincrement=False)
-    allocated = sa.Column(sa.Boolean, nullable=False, default=False,
-                          server_default=sql.false())
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False)
     network_profile_id = sa.Column(sa.String(36),
                                    sa.ForeignKey('cisco_network_profiles.id',
                                                  ondelete="CASCADE"),
@@ -121,8 +123,7 @@ class NetworkProfile(model_base.BASEV2, models_v2.HasId):
                              nullable=False)
     sub_type = sa.Column(sa.String(255))
     segment_range = sa.Column(sa.String(255))
-    multicast_ip_index = sa.Column(sa.Integer, default=0,
-                                   server_default='0')
+    multicast_ip_index = sa.Column(sa.Integer, default=0)
     multicast_ip_range = sa.Column(sa.String(255))
     physical_network = sa.Column(sa.String(255))
 
@@ -153,8 +154,7 @@ class ProfileBinding(model_base.BASEV2):
                                      name='profile_type'))
     tenant_id = sa.Column(sa.String(36),
                           primary_key=True,
-                          default=cisco_constants.TENANT_ID_NOT_SET,
-                          server_default=cisco_constants.TENANT_ID_NOT_SET)
+                          default=cisco_constants.TENANT_ID_NOT_SET)
     profile_id = sa.Column(sa.String(36), primary_key=True)
 
 

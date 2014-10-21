@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 vArmour Networks Inc.
 # All Rights Reserved.
 #
@@ -12,23 +14,21 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
-import sys
+#
+# @author: Gary Duan, vArmour Networks Inc.
+#
 
 import eventlet
-eventlet.monkey_patch()
-
 import netaddr
 from oslo.config import cfg
 
 from neutron.agent.common import config
 from neutron.agent import l3_agent
-from neutron.agent import l3_ha_agent
 from neutron.agent.linux import external_process
 from neutron.agent.linux import interface
 from neutron.agent.linux import ip_lib
-from neutron.common import config as common_config
 from neutron.common import constants as l3_constants
+from neutron.common import legacy
 from neutron.common import topics
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import service
@@ -328,17 +328,18 @@ class vArmourL3NATAgentWithStateReport(vArmourL3NATAgent,
 
 
 def main():
+    eventlet.monkey_patch()
     conf = cfg.CONF
     conf.register_opts(vArmourL3NATAgent.OPTS)
-    conf.register_opts(l3_ha_agent.OPTS)
     config.register_interface_driver_opts_helper(conf)
     config.register_use_namespaces_opts_helper(conf)
     config.register_agent_state_opts_helper(conf)
     config.register_root_helper(conf)
     conf.register_opts(interface.OPTS)
     conf.register_opts(external_process.OPTS)
-    common_config.init(sys.argv[1:])
-    config.setup_logging()
+    conf(project='neutron')
+    config.setup_logging(conf)
+    legacy.modernize_quantum_config(conf)
     server = neutron_service.Service.create(
         binary='neutron-l3-agent',
         topic=topics.L3_AGENT,

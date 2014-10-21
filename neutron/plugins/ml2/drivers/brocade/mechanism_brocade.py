@@ -12,6 +12,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# Author:
+# Shiv Haris (shivharis@hotmail.com)
 
 
 """Implentation of Brocade ML2 Mechanism driver for ML2 Plugin."""
@@ -84,9 +87,9 @@ class BrocadeMechanism(driver_api.MechanismDriver):
                 self._switch['password'])
 
         virtual_fabric_enabled = self._driver.is_virtual_fabric_enabled(
-                self._switch['address'],
-                self._switch['username'],
-                self._switch['password'])
+            self._switch['address'],
+            self._switch['username'],
+            self._switch['password'])
 
         if virtual_fabric_enabled:
             LOG.debug(_("Virtual Fabric: enabled"))

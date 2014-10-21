@@ -25,11 +25,23 @@ Create Date: 2014-02-26 18:56:00.402855
 revision = '81c553f3776c'
 down_revision = '24c7ea5160d7'
 
+# Change to ['*'] if this migration applies to all plugins
+
+migration_for_plugins = [
+    'neutron.plugins.bigswitch.plugin.NeutronRestProxyV2',
+    'neutron.plugins.ml2.plugin.Ml2Plugin'
+]
+
 from alembic import op
 import sqlalchemy as sa
 
+from neutron.db import migration
 
-def upgrade():
+
+def upgrade(active_plugins=None, options=None):
+    if not migration.should_run(active_plugins, migration_for_plugins):
+        return
+
     op.create_table(
         'consistencyhashes',
         sa.Column('hash_id', sa.String(255), primary_key=True),
@@ -37,5 +49,8 @@ def upgrade():
     )
 
 
-def downgrade():
-    pass
+def downgrade(active_plugins=None, options=None):
+    if not migration.should_run(active_plugins, migration_for_plugins):
+        return
+
+    op.drop_table('consistencyhashes')

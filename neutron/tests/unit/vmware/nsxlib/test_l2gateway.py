@@ -165,7 +165,6 @@ class L2GatewayTestCase(base.NsxlibTestCase):
                     "type": '%sConnector' % connector_type}],
             "admin_status_enabled": True
         }
-        body.get("tags").sort()
         if client_certificate:
             body["credential"] = {
                 "client_certificate": {
@@ -175,13 +174,13 @@ class L2GatewayTestCase(base.NsxlibTestCase):
 
     def test_create_gw_device(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
+        # leveraging the fake NVP API client
         display_name = 'fake-device'
         neutron_id = 'whatever'
         connector_type = 'stt'
         connector_ip = '1.1.1.1'
         client_certificate = 'this_should_be_a_certificate'
-        with mock.patch.object(nsxlib, 'do_request') as request_mock:
+        with mock.patch.object(l2gwlib, 'do_request') as request_mock:
             expected_req_body = self._create_expected_req_body(
                 display_name, neutron_id, connector_type.upper(),
                 connector_ip, client_certificate)
@@ -192,18 +191,18 @@ class L2GatewayTestCase(base.NsxlibTestCase):
             request_mock.assert_called_once_with(
                 "POST",
                 "/ws.v1/transport-node",
-                jsonutils.dumps(expected_req_body, sort_keys=True),
+                jsonutils.dumps(expected_req_body),
                 cluster=self.fake_cluster)
 
     def test_update_gw_device(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
+        # leveraging the fake NVP API client
         display_name = 'fake-device'
         neutron_id = 'whatever'
         connector_type = 'stt'
         connector_ip = '1.1.1.1'
         client_certificate = 'this_should_be_a_certificate'
-        with mock.patch.object(nsxlib, 'do_request') as request_mock:
+        with mock.patch.object(l2gwlib, 'do_request') as request_mock:
             expected_req_body = self._create_expected_req_body(
                 display_name, neutron_id, connector_type.upper(),
                 connector_ip, client_certificate)
@@ -216,17 +215,17 @@ class L2GatewayTestCase(base.NsxlibTestCase):
             request_mock.assert_called_once_with(
                 "PUT",
                 "/ws.v1/transport-node/whatever",
-                jsonutils.dumps(expected_req_body, sort_keys=True),
+                jsonutils.dumps(expected_req_body),
                 cluster=self.fake_cluster)
 
     def test_update_gw_device_without_certificate(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
+        # leveraging the fake NVP API client
         display_name = 'fake-device'
         neutron_id = 'whatever'
         connector_type = 'stt'
         connector_ip = '1.1.1.1'
-        with mock.patch.object(nsxlib, 'do_request') as request_mock:
+        with mock.patch.object(l2gwlib, 'do_request') as request_mock:
             expected_req_body = self._create_expected_req_body(
                 display_name, neutron_id, connector_type.upper(),
                 connector_ip, None)
@@ -239,13 +238,13 @@ class L2GatewayTestCase(base.NsxlibTestCase):
             request_mock.assert_called_once_with(
                 "PUT",
                 "/ws.v1/transport-node/whatever",
-                jsonutils.dumps(expected_req_body, sort_keys=True),
+                jsonutils.dumps(expected_req_body),
                 cluster=self.fake_cluster)
 
     def test_get_gw_device_status(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
-        with mock.patch.object(nsxlib, 'do_request') as request_mock:
+        # leveraging the fake NVP API client
+        with mock.patch.object(l2gwlib, 'do_request') as request_mock:
             l2gwlib.get_gateway_device_status(self.fake_cluster, 'whatever')
             request_mock.assert_called_once_with(
                 "GET",
@@ -254,7 +253,7 @@ class L2GatewayTestCase(base.NsxlibTestCase):
 
     def test_get_gw_devices_status(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
+        # leveraging the fake NVP API client
         with mock.patch.object(nsxlib, 'do_request') as request_mock:
             request_mock.return_value = {
                 'results': [],
@@ -270,7 +269,7 @@ class L2GatewayTestCase(base.NsxlibTestCase):
 
     def test_get_gw_devices_status_filter_by_tenant(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
+        # leveraging the fake NVP API client
         with mock.patch.object(nsxlib, 'do_request') as request_mock:
             request_mock.return_value = {
                 'results': [],
@@ -282,14 +281,14 @@ class L2GatewayTestCase(base.NsxlibTestCase):
                 "GET",
                 ("/ws.v1/transport-node?fields=uuid,tags&"
                  "relations=TransportNodeStatus&"
-                 "tag=ssc_napoli&tag_scope=os_tid&"
+                 "tag_scope=os_tid&tag=ssc_napoli&"
                  "_page_length=1000&tag_scope=quantum"),
                 cluster=self.fake_cluster)
 
     def test_delete_gw_device(self):
         # NOTE(salv-orlando): This unit test mocks backend calls rather than
-        # leveraging the fake NSX API client
-        with mock.patch.object(nsxlib, 'do_request') as request_mock:
+        # leveraging the fake NVP API client
+        with mock.patch.object(l2gwlib, 'do_request') as request_mock:
             l2gwlib.delete_gateway_device(self.fake_cluster, 'whatever')
             request_mock.assert_called_once_with(
                 "DELETE",

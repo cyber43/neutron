@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright (C) 2012 Midokura Japan K.K.
 # Copyright (C) 2013 Midokura PTE LTD
 # All Rights Reserved.
@@ -13,8 +15,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Rossella Sblendido, Midokura Japan KK
 
 import mock
+import sys
+sys.modules["midonetclient"] = mock.Mock()
 
 from neutron.agent.common import config
 from neutron.agent.linux import dhcp
@@ -39,6 +45,7 @@ class TestDhcpNoOpDriver(base.BaseTestCase):
         self.conf.use_namespaces = True
         instance = mock.patch("neutron.agent.linux.dhcp.DeviceManager")
         self.mock_mgr = instance.start()
+        self.addCleanup(instance.stop)
 
     def test_disable_no_retain_port(self):
         dhcp_driver = driver.DhcpNoOpDriver(self.conf, FakeNetwork())

@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -12,19 +14,14 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import sys
 import time
 
 import eventlet
-eventlet.monkey_patch()
-
 from oslo.config import cfg
 
 from neutron.agent.common import config
 from neutron.agent import rpc as agent_rpc
-from neutron.common import config as common_config
 from neutron.common import constants as constants
-from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron.common import utils
 from neutron import context
@@ -32,7 +29,9 @@ from neutron import manager
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import loopingcall
+from neutron.openstack.common.notifier import api as notifier_api
 from neutron.openstack.common import periodic_task
+from neutron.openstack.common.rpc import proxy
 from neutron.openstack.common import service
 from neutron import service as neutron_service
 
@@ -40,7 +39,7 @@ from neutron import service as neutron_service
 LOG = logging.getLogger(__name__)
 
 
-class MeteringPluginRpc(n_rpc.RpcProxy):
+class MeteringPluginRpc(proxy.RpcProxy):
 
     BASE_RPC_API_VERSION = '1.0'
 
@@ -89,7 +88,7 @@ class MeteringAgent(MeteringPluginRpc, manager.Manager):
         self.label_tenant_id = {}
         self.routers = {}
         self.metering_infos = {}
-        super(MeteringAgent, self).__init__(host=host)
+        super(MeteringAgent, self).__init__(host=self.conf.host)
 
     def _load_drivers(self):
         """Loads plugin-driver from configuration."""
@@ -111,8 +110,11 @@ class MeteringAgent(MeteringPluginRpc, manager.Manager):
                     'host': self.host}
 
             LOG.debug(_("Send metering report: %s"), data)
-            notifier = n_rpc.get_notifier('metering')
-            notifier.info(self.context, 'l3.meter', data)
+            notifier_api.notify(self.context,
+                                notifier_api.publisher_id('metering'),
+                                'l3.meter',
+                                notifier_api.CONF.default_notification_level,
+                                data)
             info['pkts'] = 0
             info['bytes'] = 0
             info['time'] = 0
@@ -279,12 +281,13 @@ class MeteringAgentWithStateReport(MeteringAgent):
 
 
 def main():
+    eventlet.monkey_patch()
     conf = cfg.CONF
     conf.register_opts(MeteringAgent.Opts)
     config.register_agent_state_opts_helper(conf)
     config.register_root_helper(conf)
-    common_config.init(sys.argv[1:])
-    config.setup_logging()
+    conf(project='neutron')
+    config.setup_logging(conf)
     server = neutron_service.Service.create(
         binary='neutron-metering-agent',
         topic=topics.METERING_AGENT,

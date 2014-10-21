@@ -1,5 +1,7 @@
 # Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
 #
+# Author: Sylvain Afchain <sylvain.afchain@enovance.com>
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -13,7 +15,6 @@
 # under the License.
 
 from oslo.config import cfg
-import six
 
 from neutron.agent.common import config
 from neutron.agent.linux import interface
@@ -103,10 +104,10 @@ class IptablesMeteringDriver(abstract_driver.MeteringAbstractDriver):
     @log.log
     def update_routers(self, context, routers):
         # disassociate removed routers
-        router_ids = set(router['id'] for router in routers)
-        for router_id, rm in six.iteritems(self.routers):
+        router_ids = [router['id'] for router in routers]
+        for router_id in self.routers:
             if router_id not in router_ids:
-                self._process_disassociate_metering_label(rm.router)
+                self._process_disassociate_metering_label(router)
 
         for router in routers:
             old_gw_port_id = None

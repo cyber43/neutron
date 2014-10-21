@@ -12,8 +12,10 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Kevin Benton, Big Switch Networks
 
-import contextlib
+from contextlib import nested
 
 import mock
 
@@ -162,12 +164,11 @@ class TestRestProxyAgent(BaseAgentTestCase):
                      'CONF.RESTPROXYAGENT.polling_interval': 5,
                      'CONF.RESTPROXYAGENT.virtual_switch_type': 'ovs',
                      'CONF.AGENT.root_helper': 'helper'}
-        with contextlib.nested(
+        with nested(
             mock.patch(AGENTMOD + '.cfg', **cfg_attrs),
-            mock.patch(AGENTMOD + '.config.init'),
             mock.patch(NEUTRONCFG),
             mock.patch(PLCONFIG),
-        ) as (mock_conf, mock_init, mock_log_conf, mock_pluginconf):
+        ) as (mock_conf, mock_log_conf, mock_pluginconf):
             self.mod_agent.main()
 
         mock_log_conf.assert_has_calls([

@@ -16,16 +16,19 @@
 from sqlalchemy import orm
 
 from neutron import context
+from neutron.db import api as db
 from neutron.plugins.vmware.common import exceptions as p_exc
 from neutron.plugins.vmware.dbexts import lsn_db
-from neutron.tests.unit import testlib_api
+from neutron.tests import base
 
 
-class LSNTestCase(testlib_api.SqlTestCase):
+class LSNTestCase(base.BaseTestCase):
 
     def setUp(self):
         super(LSNTestCase, self).setUp()
+        db.configure_db()
         self.ctx = context.get_admin_context()
+        self.addCleanup(db.clear_db)
         self.net_id = 'foo_network_id'
         self.lsn_id = 'foo_lsn_id'
         self.lsn_port_id = 'foo_port_id'

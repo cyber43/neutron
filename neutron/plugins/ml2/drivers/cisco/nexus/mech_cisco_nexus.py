@@ -25,6 +25,7 @@ from neutron.openstack.common import log as logging
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.ml2 import driver_api as api
 from neutron.plugins.ml2.drivers.cisco.nexus import config as conf
+from neutron.plugins.ml2.drivers.cisco.nexus import credentials_v2 as cred
 from neutron.plugins.ml2.drivers.cisco.nexus import exceptions as excep
 from neutron.plugins.ml2.drivers.cisco.nexus import nexus_db_v2 as nxos_db
 from neutron.plugins.ml2.drivers.cisco.nexus import nexus_network_driver
@@ -44,7 +45,11 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
         self._nexus_switches = conf.ML2MechCiscoConfig.nexus_dict
         LOG.debug(_("nexus_switches found = %s"), self._nexus_switches)
 
+        self.credentials = {}
         self.driver = nexus_network_driver.CiscoNexusDriver()
+
+        # Initialize credential store after database initialization.
+        cred.Store.initialize()
 
     def _valid_network_segment(self, segment):
         return (cfg.CONF.ml2_cisco.managed_physical_network is None or
@@ -63,19 +68,10 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
         return port['status'] == n_const.PORT_STATUS_ACTIVE
 
     def _get_switch_info(self, host_id):
-        host_connections = []
         for switch_ip, attr in self._nexus_switches:
             if str(attr) == str(host_id):
-                for port_id in (
-                    self._nexus_switches[switch_ip, attr].split(',')):
-                    if ':' in port_id:
-                        intf_type, port = port_id.split(':')
-                    else:
-                        intf_type, port = 'ethernet', port_id
-                    host_connections.append((switch_ip, intf_type, port))
-
-        if host_connections:
-            return host_connections
+                port_id = self._nexus_switches[switch_ip, attr]
+                return port_id, switch_ip
         else:
             raise excep.NexusComputeHostNotConfigured(host=host_id)
 
@@ -84,11 +80,9 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
 
         Called during update precommit port event.
         """
-        host_connections = self._get_switch_info(host_id)
-        for switch_ip, intf_type, nexus_port in host_connections:
-            port_id = '%s:%s' % (intf_type, nexus_port)
-            nxos_db.add_nexusport_binding(port_id, str(vlan_id), switch_ip,
-                                          device_id)
+        port_id, switch_ip = self._get_switch_info(host_id)
+        nxos_db.add_nexusport_binding(port_id, str(vlan_id), switch_ip,
+                                      device_id)
 
     def _configure_switch_entry(self, vlan_id, device_id, host_id):
         """Create a nexus switch entry.
@@ -98,33 +92,19 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
 
         Called during update postcommit port event.
         """
+        port_id, switch_ip = self._get_switch_info(host_id)
         vlan_name = cfg.CONF.ml2_cisco.vlan_name_prefix + str(vlan_id)
-        host_connections = self._get_switch_info(host_id)
 
-        # (nexus_port,switch_ip) will be unique in each iteration.
-        # But switch_ip will repeat if host has >1 connection to same switch.
-        # So track which switch_ips already have vlan created in this loop.
-        vlan_already_created = []
-        for switch_ip, intf_type, nexus_port in host_connections:
-
-            # The VLAN needs to be created on the switch if no other
-            # instance has been placed in this VLAN on a different host
-            # attached to this switch.  Search the existing bindings in the
-            # database.  If all the instance_id in the database match the
-            # current device_id, then create the VLAN, but only once per
-            # switch_ip.  Otherwise, just trunk.
-            all_bindings = nxos_db.get_nexusvlan_binding(vlan_id, switch_ip)
-            previous_bindings = [row for row in all_bindings
-                    if row.instance_id != device_id]
-            if previous_bindings or (switch_ip in vlan_already_created):
-                LOG.debug("Nexus: trunk vlan %s"), vlan_name
-                self.driver.enable_vlan_on_trunk_int(switch_ip, vlan_id,
-                                                     intf_type, nexus_port)
-            else:
-                vlan_already_created.append(switch_ip)
-                LOG.debug("Nexus: create & trunk vlan %s"), vlan_name
-                self.driver.create_and_trunk_vlan(
-                    switch_ip, vlan_id, vlan_name, intf_type, nexus_port)
+        # Check to see if this is the first binding to use this vlan on the
+        # switch/port. Configure switch accordingly.
+        bindings = nxos_db.get_nexusvlan_binding(vlan_id, switch_ip)
+        if len(bindings) == 1:
+            LOG.debug(_("Nexus: create & trunk vlan %s"), vlan_name)
+            self.driver.create_and_trunk_vlan(switch_ip, vlan_id, vlan_name,
+                                              port_id)
+        else:
+            LOG.debug(_("Nexus: trunk vlan %s"), vlan_name)
+            self.driver.enable_vlan_on_trunk_int(switch_ip, vlan_id, port_id)
 
     def _delete_nxos_db(self, vlan_id, device_id, host_id):
         """Delete the nexus database entry.
@@ -132,10 +112,9 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
         Called during delete precommit port event.
         """
         try:
-            rows = nxos_db.get_nexusvm_bindings(vlan_id, device_id)
-            for row in rows:
-                nxos_db.remove_nexusport_binding(
-                    row.port_id, row.vlan_id, row.switch_ip, row.instance_id)
+            row = nxos_db.get_nexusvm_binding(vlan_id, device_id)
+            nxos_db.remove_nexusport_binding(row.port_id, row.vlan_id,
+                                             row.switch_ip, row.instance_id)
         except excep.NexusPortBindingNotFound:
             return
 
@@ -147,38 +126,26 @@ class CiscoNexusMechanismDriver(api.MechanismDriver):
 
         Called during update postcommit port event.
         """
-        host_connections = self._get_switch_info(host_id)
+        port_id, switch_ip = self._get_switch_info(host_id)
 
-        # (nexus_port,switch_ip) will be unique in each iteration.
-        # But switch_ip will repeat if host has >1 connection to same switch.
-        # So track which switch_ips already have vlan removed in this loop.
-        vlan_already_removed = []
-        for switch_ip, intf_type, nexus_port in host_connections:
+        # if there are no remaining db entries using this vlan on this nexus
+        # switch port then remove vlan from the switchport trunk.
+        try:
+            nxos_db.get_port_vlan_switch_binding(port_id, vlan_id, switch_ip)
+        except excep.NexusPortBindingNotFound:
+            self.driver.disable_vlan_on_trunk_int(switch_ip, vlan_id, port_id)
 
             # if there are no remaining db entries using this vlan on this
-            # nexus switch port then remove vlan from the switchport trunk.
-            port_id = '%s:%s' % (intf_type, nexus_port)
+            # nexus switch then remove the vlan.
             try:
-                nxos_db.get_port_vlan_switch_binding(port_id, vlan_id,
-                                                     switch_ip)
+                nxos_db.get_nexusvlan_binding(vlan_id, switch_ip)
             except excep.NexusPortBindingNotFound:
-                self.driver.disable_vlan_on_trunk_int(switch_ip, vlan_id,
-                                                      intf_type, nexus_port)
-
-                # if there are no remaining db entries using this vlan on this
-                # nexus switch then remove the vlan.
-                try:
-                    nxos_db.get_nexusvlan_binding(vlan_id, switch_ip)
-                except excep.NexusPortBindingNotFound:
-
-                    # Do not perform a second time on same switch
-                    if switch_ip not in vlan_already_removed:
-                        self.driver.delete_vlan(switch_ip, vlan_id)
-                        vlan_already_removed.append(switch_ip)
+                self.driver.delete_vlan(switch_ip, vlan_id)
 
     def _is_vm_migration(self, context):
         if not context.bound_segment and context.original_bound_segment:
-            return context.host != context.original_host
+            return (context.current.get(portbindings.HOST_ID) !=
+                    context.original.get(portbindings.HOST_ID))
 
     def _port_action(self, port, segment, func):
         """Verify configuration and then process event."""

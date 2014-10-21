@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 New Dream Network, LLC (DreamHost)
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Mark McClain, DreamHost
 
 import uuid
 
@@ -18,7 +22,7 @@ from oslo.config import cfg
 
 from neutron.common import constants as q_const
 from neutron.common import exceptions as n_exc
-from neutron.common import rpc as n_rpc
+from neutron.common import rpc as q_rpc
 from neutron.common import topics
 from neutron.db import agents_db
 from neutron.db.loadbalancer import loadbalancer_db
@@ -26,6 +30,8 @@ from neutron.extensions import lbaas_agentscheduler
 from neutron.extensions import portbindings
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import rpc
+from neutron.openstack.common.rpc import proxy
 from neutron.plugins.common import constants
 from neutron.services.loadbalancer.drivers import abstract_driver
 
@@ -47,7 +53,7 @@ class DriverNotSpecified(n_exc.NeutronException):
                 "in plugin driver.")
 
 
-class LoadBalancerCallbacks(n_rpc.RpcCallback):
+class LoadBalancerCallbacks(object):
 
     RPC_API_VERSION = '2.0'
     # history
@@ -57,8 +63,11 @@ class LoadBalancerCallbacks(n_rpc.RpcCallback):
     #       - pool_deployed() and update_status() methods added;
 
     def __init__(self, plugin):
-        super(LoadBalancerCallbacks, self).__init__()
         self.plugin = plugin
+
+    def create_rpc_dispatcher(self):
+        return q_rpc.PluginRpcDispatcher(
+            [self, agents_db.AgentExtRpcCallback(self.plugin)])
 
     def get_ready_devices(self, context, host=None):
         with context.session.begin(subtransactions=True):
@@ -230,7 +239,7 @@ class LoadBalancerCallbacks(n_rpc.RpcCallback):
         self.plugin.update_pool_stats(context, pool_id, data=stats)
 
 
-class LoadBalancerAgentApi(n_rpc.RpcProxy):
+class LoadBalancerAgentApi(proxy.RpcProxy):
     """Plugin side of plugin to agent RPC API."""
 
     BASE_RPC_API_VERSION = '2.0'
@@ -335,16 +344,13 @@ class AgentDriverBase(abstract_driver.LoadBalancerAbstractDriver):
         if hasattr(self.plugin, 'agent_callbacks'):
             return
 
-        self.plugin.agent_endpoints = [
-            LoadBalancerCallbacks(self.plugin),
-            agents_db.AgentExtRpcCallback(self.plugin)
-        ]
-        self.plugin.conn = n_rpc.create_connection(new=True)
+        self.plugin.agent_callbacks = LoadBalancerCallbacks(self.plugin)
+        self.plugin.conn = rpc.create_connection(new=True)
         self.plugin.conn.create_consumer(
             topics.LOADBALANCER_PLUGIN,
-            self.plugin.agent_endpoints,
+            self.plugin.agent_callbacks.create_rpc_dispatcher(),
             fanout=False)
-        self.plugin.conn.consume_in_threads()
+        self.plugin.conn.consume_in_thread()
 
     def get_pool_agent(self, context, pool_id):
         agent = self.plugin.get_lbaas_agent_hosting_pool(context, pool_id)

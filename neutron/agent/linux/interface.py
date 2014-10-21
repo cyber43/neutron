@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
@@ -23,10 +25,8 @@ from neutron.agent.common import config
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import ovs_lib
 from neutron.agent.linux import utils
-from neutron.common import constants as n_const
 from neutron.common import exceptions
-from neutron.extensions import flavor
-from neutron.openstack.common.gettextutils import _LE
+from neutron.extensions.flavor import (FLAVOR_NETWORK)
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
@@ -43,11 +43,7 @@ OPTS = [
     cfg.IntOpt('network_device_mtu',
                help=_('MTU setting for device.')),
     cfg.StrOpt('meta_flavor_driver_mappings',
-               help=_('Mapping between flavor and LinuxInterfaceDriver. '
-                      'It is specific to MetaInterfaceDriver used with '
-                      'admin_user, admin_password, admin_tenant_name, '
-                      'admin_url, auth_strategy, auth_region and '
-                      'endpoint_type.')),
+               help=_('Mapping between flavor and LinuxInterfaceDriver')),
     cfg.StrOpt('admin_user',
                help=_("Admin username")),
     cfg.StrOpt('admin_password',
@@ -61,10 +57,6 @@ OPTS = [
                help=_("The type of authentication to use")),
     cfg.StrOpt('auth_region',
                help=_("Authentication region")),
-    cfg.StrOpt('endpoint_type',
-               default='publicURL',
-               help=_("Network service endpoint type to pull from "
-                      "the keystone catalog")),
 ]
 
 
@@ -73,14 +65,14 @@ class LinuxInterfaceDriver(object):
 
     # from linux IF_NAMESIZE
     DEV_NAME_LEN = 14
-    DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
+    DEV_NAME_PREFIX = 'tap'
 
     def __init__(self, conf):
         self.conf = conf
         self.root_helper = config.get_root_helper(conf)
 
     def init_l3(self, device_name, ip_cidrs, namespace=None,
-                preserve_ips=[], gateway=None, extra_subnets=[]):
+                preserve_ips=[]):
         """Set the L3 settings for the interface using data from the port.
 
         ip_cidrs: list of 'X.X.X.X/YY' strings
@@ -98,10 +90,6 @@ class LinuxInterfaceDriver(object):
         for ip_cidr in ip_cidrs:
 
             net = netaddr.IPNetwork(ip_cidr)
-            # Convert to compact IPv6 address because the return values of
-            # "ip addr list" are compact.
-            if net.version == 6:
-                ip_cidr = str(net)
             if ip_cidr in previous:
                 del previous[ip_cidr]
                 continue
@@ -112,56 +100,6 @@ class LinuxInterfaceDriver(object):
         for ip_cidr, ip_version in previous.items():
             if ip_cidr not in preserve_ips:
                 device.addr.delete(ip_version, ip_cidr)
-                self.delete_conntrack_state(root_helper=self.root_helper,
-                                            namespace=namespace,
-                                            ip=ip_cidr)
-
-        if gateway:
-            device.route.add_gateway(gateway)
-
-        new_onlink_routes = set(s['cidr'] for s in extra_subnets)
-        existing_onlink_routes = set(device.route.list_onlink_routes())
-        for route in new_onlink_routes - existing_onlink_routes:
-            device.route.add_onlink_route(route)
-        for route in existing_onlink_routes - new_onlink_routes:
-            device.route.delete_onlink_route(route)
-
-    def delete_conntrack_state(self, root_helper, namespace, ip):
-        """Delete conntrack state associated with an IP address.
-
-        This terminates any active connections through an IP.  Call this soon
-        after removing the IP address from an interface so that new connections
-        cannot be created before the IP address is gone.
-
-        root_helper: root_helper to gain root access to call conntrack
-        namespace: the name of the namespace where the IP has been configured
-        ip: the IP address for which state should be removed.  This can be
-            passed as a string with or without /NN.  A netaddr.IPAddress or
-            netaddr.Network representing the IP address can also be passed.
-        """
-        ip_str = str(netaddr.IPNetwork(ip).ip)
-        ip_wrapper = ip_lib.IPWrapper(root_helper, namespace=namespace)
-
-        # Delete conntrack state for ingress traffic
-        # If 0 flow entries have been deleted
-        # conntrack -D will return 1
-        try:
-            ip_wrapper.netns.execute(["conntrack", "-D", "-d", ip_str],
-                                     check_exit_code=True,
-                                     extra_ok_codes=[1])
-
-        except RuntimeError:
-            LOG.exception(_LE("Failed deleting ingress connection state of"
-                              " floatingip %s"), ip_str)
-
-        # Delete conntrack state for egress traffic
-        try:
-            ip_wrapper.netns.execute(["conntrack", "-D", "-q", ip_str],
-                                     check_exit_code=True,
-                                     extra_ok_codes=[1])
-        except RuntimeError:
-            LOG.exception(_LE("Failed deleting egress connection state of"
-                              " floatingip %s"), ip_str)
 
     def check_bridge_exists(self, bridge):
         if not ip_lib.device_exists(bridge):
@@ -192,7 +130,7 @@ class NullDriver(LinuxInterfaceDriver):
 class OVSInterfaceDriver(LinuxInterfaceDriver):
     """Driver for creating an internal interface on an OVS bridge."""
 
-    DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
+    DEV_NAME_PREFIX = 'tap'
 
     def __init__(self, conf):
         super(OVSInterfaceDriver, self).__init__(conf)
@@ -201,8 +139,7 @@ class OVSInterfaceDriver(LinuxInterfaceDriver):
 
     def _get_tap_name(self, dev_name, prefix=None):
         if self.conf.ovs_use_veth:
-            dev_name = dev_name.replace(prefix or self.DEV_NAME_PREFIX,
-                                        n_const.TAP_DEVICE_PREFIX)
+            dev_name = dev_name.replace(prefix or self.DEV_NAME_PREFIX, 'tap')
         return dev_name
 
     def _ovs_add_port(self, bridge, device_name, port_id, mac_address,
@@ -297,8 +234,7 @@ class MidonetInterfaceDriver(LinuxInterfaceDriver):
                                     self.root_helper,
                                     namespace=namespace):
             ip = ip_lib.IPWrapper(self.root_helper)
-            tap_name = device_name.replace(prefix or n_const.TAP_DEVICE_PREFIX,
-                                           n_const.TAP_DEVICE_PREFIX)
+            tap_name = device_name.replace(prefix or 'tap', 'tap')
 
             # Create ns_dev in a namespace if one is configured.
             root_dev, ns_dev = ip.add_veth(tap_name, device_name,
@@ -337,15 +273,14 @@ class MidonetInterfaceDriver(LinuxInterfaceDriver):
 class IVSInterfaceDriver(LinuxInterfaceDriver):
     """Driver for creating an internal interface on an IVS bridge."""
 
-    DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
+    DEV_NAME_PREFIX = 'tap'
 
     def __init__(self, conf):
         super(IVSInterfaceDriver, self).__init__(conf)
         self.DEV_NAME_PREFIX = 'ns-'
 
     def _get_tap_name(self, dev_name, prefix=None):
-        dev_name = dev_name.replace(prefix or self.DEV_NAME_PREFIX,
-                                    n_const.TAP_DEVICE_PREFIX)
+        dev_name = dev_name.replace(prefix or self.DEV_NAME_PREFIX, 'tap')
         return dev_name
 
     def _ivs_add_port(self, device_name, port_id, mac_address):
@@ -412,8 +347,10 @@ class BridgeInterfaceDriver(LinuxInterfaceDriver):
             ip = ip_lib.IPWrapper(self.root_helper)
 
             # Enable agent to define the prefix
-            tap_name = device_name.replace(prefix or self.DEV_NAME_PREFIX,
-                                        n_const.TAP_DEVICE_PREFIX)
+            if prefix:
+                tap_name = device_name.replace(prefix, 'tap')
+            else:
+                tap_name = device_name.replace(self.DEV_NAME_PREFIX, 'tap')
             # Create ns_veth in a namespace if one is configured.
             root_veth, ns_veth = ip.add_veth(tap_name, device_name,
                                              namespace2=namespace)
@@ -450,23 +387,22 @@ class MetaInterfaceDriver(LinuxInterfaceDriver):
             tenant_name=self.conf.admin_tenant_name,
             auth_url=self.conf.auth_url,
             auth_strategy=self.conf.auth_strategy,
-            region_name=self.conf.auth_region,
-            endpoint_type=self.conf.endpoint_type
+            region_name=self.conf.auth_region
         )
         self.flavor_driver_map = {}
-        for net_flavor, driver_name in [
+        for flavor, driver_name in [
                 driver_set.split(':')
                 for driver_set in
                 self.conf.meta_flavor_driver_mappings.split(',')]:
-            self.flavor_driver_map[net_flavor] = self._load_driver(driver_name)
+            self.flavor_driver_map[flavor] = self._load_driver(driver_name)
 
     def _get_flavor_by_network_id(self, network_id):
         network = self.neutron.show_network(network_id)
-        return network['network'][flavor.FLAVOR_NETWORK]
+        return network['network'][FLAVOR_NETWORK]
 
     def _get_driver_by_network_id(self, network_id):
-        net_flavor = self._get_flavor_by_network_id(network_id)
-        return self.flavor_driver_map[net_flavor]
+        flavor = self._get_flavor_by_network_id(network_id)
+        return self.flavor_driver_map[flavor]
 
     def _set_device_plugin_tag(self, network_id, device_name, namespace=None):
         plugin_tag = self._get_flavor_by_network_id(network_id)

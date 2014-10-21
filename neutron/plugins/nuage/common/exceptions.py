@@ -11,6 +11,9 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Ronak Shah, Nuage Networks, Alcatel-Lucent USA Inc.
+
 
 ''' Nuage specific exceptions '''
 
@@ -19,7 +22,3 @@ from neutron.common import exceptions as n_exc
 
 class OperationNotSupported(n_exc.InvalidConfigurationOption):
     message = _("Nuage Plugin does not support this operation: %(msg)s")
-
-
-class NuageBadRequest(n_exc.BadRequest):
-    message = _("Bad request: %(msg)s")

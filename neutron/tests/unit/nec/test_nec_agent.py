@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+#
 # Copyright 2013 NEC Corporation.  All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,7 +21,7 @@ import time
 
 import mock
 from oslo.config import cfg
-from six import moves
+from six.moves import xrange
 import testtools
 
 from neutron.agent.linux import ovs_lib
@@ -39,6 +41,8 @@ class TestNecAgentBase(base.BaseTestCase):
         cfg.CONF.set_default('firewall_driver',
                              'neutron.agent.firewall.NoopFirewallDriver',
                              group='SECURITYGROUP')
+        cfg.CONF.set_override('rpc_backend',
+                              'neutron.openstack.common.rpc.impl_fake')
         cfg.CONF.set_override('host', 'dummy-host')
         with contextlib.nested(
             mock.patch.object(ovs_lib.OVSBridge, 'get_datapath_id',
@@ -150,8 +154,8 @@ class TestNecAgent(TestNecAgentBase):
         # Ensure vif_ports_scenario is longer than DAEMON_LOOP_COUNT
         if len(self.vif_ports_scenario) < DAEMON_LOOP_COUNT:
             self.vif_ports_scenario.extend(
-                [] for _i in moves.xrange(DAEMON_LOOP_COUNT -
-                                          len(self.vif_ports_scenario)))
+                [] for _i in xrange(DAEMON_LOOP_COUNT -
+                                    len(self.vif_ports_scenario)))
 
         with contextlib.nested(
             mock.patch.object(time, 'sleep', side_effect=sleep_mock),
@@ -346,16 +350,18 @@ class TestNecAgentMain(base.BaseTestCase):
     def test_main(self):
         with contextlib.nested(
             mock.patch.object(nec_neutron_agent, 'NECNeutronAgent'),
-            mock.patch.object(nec_neutron_agent, 'common_config'),
+            mock.patch('eventlet.monkey_patch'),
+            mock.patch.object(nec_neutron_agent, 'logging_config'),
             mock.patch.object(nec_neutron_agent, 'config')
-        ) as (agent, common_config, cfg):
+        ) as (agent, eventlet, logging_config, cfg):
             cfg.OVS.integration_bridge = 'br-int-x'
             cfg.AGENT.root_helper = 'dummy-helper'
             cfg.AGENT.polling_interval = 10
 
             nec_neutron_agent.main()
 
-            self.assertTrue(common_config.setup_logging.called)
+            self.assertTrue(eventlet.called)
+            self.assertTrue(logging_config.setup_logging.called)
             agent.assert_has_calls([
                 mock.call('br-int-x', 'dummy-helper', 10),
                 mock.call().daemon_loop()

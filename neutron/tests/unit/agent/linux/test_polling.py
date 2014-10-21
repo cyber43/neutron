@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -42,9 +44,6 @@ class TestBasePollingManager(base.BaseTestCase):
     def setUp(self):
         super(TestBasePollingManager, self).setUp()
         self.pm = polling.BasePollingManager()
-
-    def test__is_polling_required_should_not_be_implemented(self):
-        self.assertRaises(NotImplementedError, self.pm._is_polling_required)
 
     def test_force_polling_sets_interval_attribute(self):
         self.assertFalse(self.pm._force_polling)

@@ -1,3 +1,5 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
+
 # Copyright 2013 Cisco Systems, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -11,6 +13,10 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# @author: Abhishek Raut, Cisco Systems, Inc.
+# @author: Sergey Sudakovich, Cisco Systems, Inc.
+# @author: Rudrajit Tapadar, Cisco Systems, Inc.
 
 from neutron.api import extensions
 from neutron.api.v2 import attributes
@@ -42,14 +48,10 @@ RESOURCE_ATTRIBUTE_MAP = {
                              'is_visible': True, 'default': ''},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'is_visible': False, 'default': ''},
-        'add_tenants': {'allow_post': True, 'allow_put': True,
-                        'is_visible': True, 'default': None,
-                        'convert_to': attributes.convert_none_to_empty_list},
-        'remove_tenants': {
-            'allow_post': True, 'allow_put': True,
-            'is_visible': True, 'default': None,
-            'convert_to': attributes.convert_none_to_empty_list,
-        },
+        'add_tenant': {'allow_post': True, 'allow_put': True,
+                       'is_visible': True, 'default': None},
+        'remove_tenant': {'allow_post': True, 'allow_put': True,
+                          'is_visible': True, 'default': None},
     },
     'network_profile_bindings': {
         'profile_id': {'allow_post': False, 'allow_put': False,

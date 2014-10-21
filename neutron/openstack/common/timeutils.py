@@ -114,7 +114,7 @@ def utcnow():
 
 
 def iso8601_from_timestamp(timestamp):
-    """Returns an iso8601 formatted date from timestamp."""
+    """Returns a iso8601 formated date from timestamp."""
     return isotime(datetime.datetime.utcfromtimestamp(timestamp))
 
 
@@ -134,7 +134,7 @@ def set_time_override(override_time=None):
 
 def advance_time_delta(timedelta):
     """Advance overridden time using a datetime.timedelta."""
-    assert utcnow.override_time is not None
+    assert(not utcnow.override_time is None)
     try:
         for dt in utcnow.override_time:
             dt += timedelta
